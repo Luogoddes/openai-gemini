@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   Generate app/build-config.h from updater.conf.
@@ -61,6 +61,7 @@ $lines = @(
     ('#define APP_EXE_NAME ' + (To-CLiteral (Get-Value 'exe_name' 'app.exe'))),
     ('#define APP_WINDOW_TITLE ' + (To-CLiteral (Get-Value 'window_title' 'Generic Updater Demo'))),
     ('#define APP_BUILD_VERSION ' + (To-CLiteral (Get-BuildVersion))),
+    ('#define APP_STARTUP_DELAY_SECONDS ' + (Get-Value 'startup_check_delay_seconds' '30')),
     ''
 )
 

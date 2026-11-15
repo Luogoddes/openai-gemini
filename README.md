@@ -47,6 +47,7 @@ homepage=https://github.com/Luogoddes/openai-gemini
 variant=portable
 platform=windows-x64
 interval_hours=24
+startup_check_delay_seconds=30
 product=generic-updater
 window_title=Generic Updater Demo — 版本更新
 require_signature=false
@@ -196,6 +197,7 @@ cargo test                            # 15 个单测（含签名、journal、文
 - **没有 Authenticode 证书**：SmartScreen 仍提示未知发布者；元数据签名不等于代码签名。
 - **断电恢复依赖 journal 落盘**：极端情况（journal 写一半断电）仍需 `--clean`。
 - **平台**：Windows x64 已实测；其他平台只有裸编译路径。
+
 
 
 

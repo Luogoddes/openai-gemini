@@ -154,11 +154,7 @@ impl Config {
         self.cache_dir().join("backup")
     }
 
-    /// 启动探测标记：放在缓存目录，安装目录里不留任何临时文件。
-    /// 更新器拉起客户端时会把这个路径用 `--started-marker` 传过去。
-    pub fn started_marker(&self) -> PathBuf {
-        self.cache_dir().join("started.flag")
-    }
+
 
     /// 读取本地已安装版本；文件不存在时按 0.0.0 处理（首次安装场景）。
     pub fn local_version(&self) -> Result<semver::Version, AppError> {
@@ -171,10 +167,7 @@ impl Config {
             .map_err(|e| AppError::Config(format!("本地版本号无法解析 `{trimmed}`: {e}")))
     }
 
-    pub fn write_local_version(&self, version: &semver::Version) -> Result<(), AppError> {
-        std::fs::write(self.version_file_path(), format!("{version}\n"))
-            .map_err(|e| AppError::Io(e))
-    }
+
 }
 
 fn system_cache_root() -> Option<PathBuf> {

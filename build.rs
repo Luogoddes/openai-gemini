@@ -47,7 +47,7 @@ fn main() {
          #[allow(dead_code)]\npub const PLATFORM: &str = {platform:?};\n\
          #[allow(dead_code)]\npub const PRODUCT: &str = {product:?};\n\
          #[allow(dead_code)]\npub const INTERVAL_HOURS: u64 = {interval};\n\
-         #[allow(dead_code)]\npub const REQUIRE_SIGNATURE: bool = {require_signature};\n",
+         #[allow(dead_code)]\npub const REQUIRE_SIGNATURE: bool = {require_signature};\n         #[allow(dead_code)]\npub const STARTUP_CHECK_DELAY_SECONDS: u64 = {startup_delay};\n",
         repo = get("repo", "owner/app"),
         feed = get("feed_name", "latest-version-windows-x64.json"),
         exe = get("exe_name", "app.exe"),
@@ -57,6 +57,7 @@ fn main() {
         product = get("product", "app"),
         interval = get("interval_hours", "24").parse::<u64>().unwrap_or(24),
         require_signature = get("require_signature", "false").trim() == "true",
+        startup_delay = get("startup_check_delay_seconds", "30").parse::<u64>().unwrap_or(30),
     );
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());

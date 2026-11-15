@@ -88,7 +88,7 @@ struct AppState {
   std::wstring baseDir;
   std::wstring updaterPath;
   std::wstring versionPath;
-  std::wstring markerPath;
+
   std::wstring localVersion;
   std::wstring availableVersion;
   std::wstring pendingVersion;
@@ -593,12 +593,34 @@ void SkipCurrentVersion() {
   SetStatus(L"已跳过版本 " + gState.availableVersion);
 }
 
+// 更新完成后，旧镜像 `*.old-*` 可能还被执行中的更新器占用；这里在后台重试删除，
+// 避免安装目录里留下文件（不额外拉进程，纯文件操作）。
+DWORD WINAPI CleanupOldImages(LPVOID) {
+  for (int attempt = 0; attempt < 20; ++attempt) {
+    bool found = false;
+    WIN32_FIND_DATAW data = {};
+    std::wstring pattern = gState.baseDir + L"\\*.old-*";
+    HANDLE find = FindFirstFileW(pattern.c_str(), &data);
+    if (find != INVALID_HANDLE_VALUE) {
+      do {
+        found = true;
+        std::wstring path = gState.baseDir + L"\\" + data.cFileName;
+        DeleteFileW(path.c_str());
+      } while (FindNextFileW(find, &data));
+      FindClose(find);
+    }
+    if (!found) break;
+    Sleep(300);
+  }
+  return 0;
+}
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
   switch (message) {
     case WM_CREATE:
       BuildUi(window);
       LoadLocalVersion();
-      SetTimer(window, 1, 400, nullptr);
+      // 启动后先让用户看到界面，按配置延迟再做自动检查（默认 30 秒）。
+      SetTimer(window, 1, (UINT)(APP_STARTUP_DELAY_SECONDS * 1000), nullptr);
       return 0;
 
     case WM_TIMER:
@@ -666,22 +688,7 @@ std::wstring ExecutablePath() {
   return std::wstring(buffer, length);
 }
 
-// 更新器拉起新版时会用 --started-marker 把标记路径传过来（在缓存目录里，不在安装目录）。
-// 写完这个标记，更新器才会认为"新版起来了"；拿不到参数时退回临时目录。
-void SignalStarted() {
-  std::wstring path = gState.markerPath;
-  if (path.empty()) {
-    wchar_t temp[MAX_PATH * 2] = {};
-    if (GetTempPathW(MAX_PATH * 2, temp) == 0) return;
-    path = std::wstring(temp) + L"generic-updater-started.flag";
-  }
-  size_t slash = path.find_last_of(L"\\/");
-  if (slash != std::wstring::npos) {
-    std::wstring directory = path.substr(0, slash);
-    CreateDirectoryW(directory.c_str(), nullptr);
-  }
-  WriteTextFile(path, L"started");
-}
+
 
 
 
@@ -711,20 +718,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
   gState.baseDir = DirectoryOf(ExecutablePath());
   gState.updaterPath = gState.baseDir + L"\\generic-updater.exe";
   gState.versionPath = gState.baseDir + L"\\version.txt";
-  // 更新器重启新版时会带 --started-marker <path>
-  {
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (argv) {
-      for (int index = 1; index + 1 < argc; ++index) {
-        if (wcscmp(argv[index], L"--started-marker") == 0) {
-          gState.markerPath = argv[index + 1];
-          break;
-        }
-      }
-      LocalFree(argv);
-    }
-  }
+
 
 
   INITCOMMONCONTROLSEX controls = {};
@@ -753,9 +747,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 
   ShowWindow(window, showCommand);
   UpdateWindow(window);
+  {
+    HANDLE thread = CreateThread(nullptr, 0, CleanupOldImages, nullptr, 0, nullptr);
+    if (thread) CloseHandle(thread);
+  }
   // 先告诉更新器「新版起来了」，它才会退出并释放被改名的旧镜像，
   // 更新器才会退出，把 `*.old-*` 旧镜像释放掉。
-  SignalStarted();
+
 
   MSG message = {};
   while (GetMessageW(&message, nullptr, 0, 0) > 0) {

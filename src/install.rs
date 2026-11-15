@@ -60,22 +60,58 @@ fn running_exe() -> Option<PathBuf> {
     std::env::current_exe().ok().and_then(|path| path.canonicalize().ok())
 }
 
-fn installed_list_path(cache_dir: &Path) -> PathBuf {
-    cache_dir.join("installed.json")
+/// 安装清单跟着程序走（放在安装目录、隐藏属性），这样清缓存也不会丢失"该删哪些旧文件"。
+const MANIFEST_NAME: &str = ".update-files.json";
+
+fn installed_list_path(install_dir: &Path) -> PathBuf {
+    install_dir.join(MANIFEST_NAME)
 }
 
-fn read_installed(cache_dir: &Path) -> Vec<String> {
-    std::fs::read_to_string(installed_list_path(cache_dir))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
-        .unwrap_or_default()
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn SetFileAttributesW(name: *const u16, attributes: u32) -> i32;
 }
 
-fn write_installed(cache_dir: &Path, files: &[String]) -> Result<(), AppError> {
-    std::fs::create_dir_all(cache_dir)?;
+fn hide_file(path: &Path) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        unsafe {
+            SetFileAttributesW(wide.as_ptr(), FILE_ATTRIBUTE_HIDDEN);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+    }
+}
+
+fn read_installed(install_dir: &Path, cache_dir: &Path) -> Vec<String> {
+    let current = installed_list_path(install_dir);
+    if let Ok(text) = std::fs::read_to_string(&current) {
+        if let Ok(list) = serde_json::from_str::<Vec<String>>(&text) {
+            return list;
+        }
+    }
+    // 从旧版本（清单在缓存里）迁移一次
+    let legacy = cache_dir.join("installed.json");
+    if let Ok(text) = std::fs::read_to_string(&legacy) {
+        if let Ok(list) = serde_json::from_str::<Vec<String>>(&text) {
+            return list;
+        }
+    }
+    Vec::new()
+}
+
+fn write_installed(install_dir: &Path, files: &[String]) -> Result<(), AppError> {
     let text = serde_json::to_string_pretty(files)
         .map_err(|e| AppError::Other(format!("文件清单序列化失败: {e}")))?;
-    std::fs::write(installed_list_path(cache_dir), text)?;
+    let path = installed_list_path(install_dir);
+    std::fs::write(&path, text)?;
+    hide_file(&path);
     Ok(())
 }
 
@@ -180,7 +216,7 @@ pub fn install(
     journal.save(&journal_path)?;
 
     // 第二遍：备份 + 覆盖。
-    let previous_files = read_installed(cache_dir);
+    let previous_files = read_installed(target_root, cache_dir);
     let mut produced_old_images = Vec::new();
     let mut installed_files: Vec<String> = Vec::new();
     for plan in &plans {
@@ -215,12 +251,8 @@ pub fn install(
         }
     }
 
-    // 版本号文件由调用方写入，这里固定登记，避免被当成遗留文件。
-    if !installed_files.iter().any(|path| path == "version.txt") {
-        installed_files.push("version.txt".to_string());
-    }
     remove_obsolete(target_root, &previous_files, &installed_files);
-    write_installed(cache_dir, &installed_files)?;
+    write_installed(target_root, &installed_files)?;
 
     Journal::commit(&journal_path)?;
 
@@ -295,8 +327,9 @@ mod tests {
     #[test]
     fn installed_inventory_round_trips() {
         let dir = temp_dir("inventory");
+        let cache = dir.join("cache");
         write_installed(&dir, &["app.exe".to_string(), "version.txt".to_string()]).unwrap();
-        assert_eq!(read_installed(&dir), vec!["app.exe", "version.txt"]);
+        assert_eq!(read_installed(&dir, &cache), vec!["app.exe", "version.txt"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

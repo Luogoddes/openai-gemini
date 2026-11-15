@@ -8,7 +8,7 @@ use crate::platform;
 use crate::protocol::{emit, emit_with_skip, State};
 use crate::state::UpdateState;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// 退出码约定：0 = 无更新；2 = 有更新 / 已就绪 / 更新成功；1 = 失败。
 pub const EXIT_NO_UPDATE: i32 = 0;
@@ -277,25 +277,11 @@ fn download(cfg: &Config) -> Result<i32, AppError> {
     Ok(EXIT_UPDATE)
 }
 
-/// 拉起新版并确认它真的起来了：
-/// 主程序启动后会写 `started.flag`；只要进程还活着超过几秒也算启动成功，
-/// 避免标记文件因为时序问题误判，导致"重启两次"。
-fn probe_started(child: &mut std::process::Child, marker: &Path) -> bool {
-    let started = Instant::now();
-    loop {
-        if marker.exists() {
-            return true;
-        }
-        match child.try_wait() {
-            Ok(Some(_)) => return false, // 子进程提前退出
-            Ok(None) => {}
-            Err(_) => return false,
-        }
-        if started.elapsed() > Duration::from_secs(8) {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
+/// 拉起新版后观察 3 秒：进程提前退出视为失败（触发回滚），活着就算启动成功。
+/// 不依赖任何标记文件，客户端也不需要配合写文件。
+fn probe_started(child: &mut std::process::Child) -> bool {
+    std::thread::sleep(Duration::from_secs(3));
+    matches!(child.try_wait(), Ok(None))
 }
 
 /// 只清下载产物，保留 state.json / installed.json，避免下次失去 24h 时间戳和文件清单。
@@ -336,8 +322,7 @@ fn apply(cfg: &Config, parent_pid: Option<u32>, args: &[String]) -> Result<i32, 
 
     let version = state.pending_version.clone().unwrap_or_default();
     let notes = state.pending_notes.clone().unwrap_or_default();
-    let parsed = semver::Version::parse(&version)
-        .map_err(|e| AppError::Install(format!("待安装版本号非法 `{version}`: {e}")))?;
+
 
     emit(State::Applying, &version, &notes, 0, 0, None, false);
 
@@ -371,8 +356,6 @@ fn apply(cfg: &Config, parent_pid: Option<u32>, args: &[String]) -> Result<i32, 
 
     let install_dir = cfg.install_dir();
     let backup = cfg.backup_dir();
-    // 旧版本号必须在覆盖之前读：发布包里通常自带 version.txt，装完就变了。
-    let previous_version = cfg.local_version().ok();
     let ctx = match platform::retry_until(Duration::from_secs(90), || {
         install::install(&staging, &install_dir, &backup, &cache, &version)
     }) {
@@ -380,34 +363,23 @@ fn apply(cfg: &Config, parent_pid: Option<u32>, args: &[String]) -> Result<i32, 
         Err(error) => return Err(fail(error, &version, &notes)),
     };
 
-    if let Err(error) = cfg.write_local_version(&parsed) {
-        restore_previous(&ctx, cfg, previous_version.as_ref());
-        return Err(fail(error, &version, &notes));
-    }
-
-    // 启动探测：主程序起来后会写 started.flag；没写且进程提前退出就回滚。
-    let marker = cfg.started_marker();
-    let _ = std::fs::remove_file(&marker);
-    if let Some(parent) = marker.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let mut child = match relaunch(cfg, &marker) {
+    // 启动探测：拉起后 3 秒内进程退出就回滚。
+    let mut child = match relaunch(cfg) {
         Ok(child) => child,
         Err(error) => {
-            restore_previous(&ctx, cfg, previous_version.as_ref());
+            restore_previous(&ctx, cfg);
             return Err(fail(error, &version, &notes));
         }
     };
 
-    if !probe_started(&mut child, &marker) {
+    if !probe_started(&mut child) {
         let error = AppError::Install("新版启动探测失败，已回滚到旧版本".to_string());
-        restore_previous(&ctx, cfg, previous_version.as_ref());
+        restore_previous(&ctx, cfg);
         // 旧版本已经还原，重新拉起给用户一个能用的界面。
-        let _ = relaunch(cfg, &marker);
+        let _ = relaunch(cfg);
         return Err(fail(error, &version, &notes));
     }
 
-    let _ = std::fs::remove_file(&marker);
     install::cleanup(&ctx);
     clean_downloads(&cache);
     // 0.5.2 及更早版本会在安装目录留下 .app-update，升级后顺手清掉。
@@ -421,15 +393,9 @@ fn apply(cfg: &Config, parent_pid: Option<u32>, args: &[String]) -> Result<i32, 
     Ok(EXIT_UPDATE)
 }
 
-fn restore_previous(
-    ctx: &InstallContext,
-    cfg: &Config,
-    previous: Option<&semver::Version>,
-) {
+fn restore_previous(ctx: &InstallContext, cfg: &Config) {
+    // version.txt 也是被覆盖的普通文件，回滚时会从备份里还原，不用单独处理。
     let _ = install::rollback(ctx);
-    if let Some(previous) = previous {
-        let _ = cfg.write_local_version(previous);
-    }
     install::cleanup(ctx);
     // 回滚完成后 journal 就没用了，删掉免得下次启动又回滚一遍。
     let _ = std::fs::remove_file(journal::Journal::path(&cfg.cache_dir()));
@@ -444,7 +410,7 @@ fn clean(cfg: &Config) -> Result<i32, AppError> {
     Ok(EXIT_NO_UPDATE)
 }
 
-fn relaunch(cfg: &Config, marker: &Path) -> Result<std::process::Child, AppError> {
+fn relaunch(cfg: &Config) -> Result<std::process::Child, AppError> {
     let name = match &cfg.exe_name {
         Some(name) => name.clone(),
         None => format!("{}.exe", cfg.repo.rsplit('/').next().unwrap_or("app")),
@@ -459,7 +425,7 @@ fn relaunch(cfg: &Config, marker: &Path) -> Result<std::process::Child, AppError
 
     let mut command = std::process::Command::new(&exe);
     command.current_dir(cfg.install_dir());
-    command.arg("--started-marker").arg(marker);
+
     // 不要把自己的 stdout/stderr 管道句柄继承给新进程，否则调用方读管道会一直等不到 EOF。
     command
         .stdin(std::process::Stdio::null())

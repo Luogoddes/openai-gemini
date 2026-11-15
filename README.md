@@ -12,9 +12,10 @@ RSA-PSS 元数据验签 / 备份替换 / 断电恢复 / UAC 提权 / 重启拉�
 
 | 文档 | 内容 |
 |---|---|
-| [docs/01-更新功能说明.md](docs/01-更新功能说明.md) | 架构、状态机、协议、签名、事务、边界 |
+| [docs/01-更新功能说明.md](docs/01-更新功能说明.md) | 架构、协议、检查机制、事务安装、签名、边界 |
 | [docs/02-接入指南.md](docs/02-接入指南.md) | 一键脚手架、接入已有项目、发布/签名/排错清单 |
-| `tools/scaffold-update.ps1` | 一条命令把更新模块生成到新项目 |
+| [docs/03-设计决策记录.md](docs/03-设计决策记录.md) | 版本演进、关键取舍、踩坑记录、验证结果 |
+| `tools/scaffold-update.ps1` | 一条命令把更新模块（含文档）生成到新项目 |
 | [docs/skill/update-feature/SKILL.md](docs/skill/update-feature/SKILL.md) | 给 Agent 用的技能说明（可放进 DSH skills 目录） |
 
 新项目接入（在源仓库里执行）：

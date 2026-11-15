@@ -59,8 +59,40 @@ pub fn run(cfg: &Config, mode: Mode, args: &[String]) -> Result<i32, AppError> {
     }
 }
 
-fn recover(cfg: &Config) -> Result<i32, AppError> {
-    match journal::recover(&cfg.cache_dir(), &cfg.install_dir())? {
+/// 本地校验一份已发布的 feed：签名是否有效、属于哪个 key、版本号多少。
+/// 用于发布后自查，等价于客户端 `--check` 里做的验签步骤，但不联网、不需要配置。
+pub fn verify_feed(path: &str) -> Result<i32, AppError> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| AppError::Config(format!("读取元数据失败 {path}: {e}")))?;
+
+    let key_id = serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|outer| {
+            outer
+                .get("keyId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "<未签名>".to_string());
+
+    let payload = crate::contract::verify_envelope(&raw)?;
+    let value: serde_json::Value = serde_json::from_str(&payload)
+        .map_err(|e| AppError::Verify(format!("payload 不是合法 JSON: {e}")))?;
+    let version = value
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let packages = value
+        .get("packages")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| items.len())
+        .unwrap_or(0);
+
+    println!("签名有效: keyId={key_id} version={version} packages={packages}");
+    Ok(EXIT_NO_UPDATE)
+}
+
+fn recover(cfg: &Config) -> Result<i32, AppError> {    match journal::recover(&cfg.cache_dir(), &cfg.install_dir())? {
         journal::Recovery::RolledBack(count) => {
             eprintln!("检测到上次中断的安装，已回滚 {count} 个文件");
             emit(State::Idle, "", "", 0, 0, None, false);

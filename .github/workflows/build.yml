@@ -59,8 +59,11 @@ jobs:
             v*) ;;
             *) tag="v${tag}" ;;
           esac
+          version="${tag#v}"
+          version="${version%%_*}"
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          echo "resolved tag: ${tag}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "resolved tag: ${tag} (version ${version})"
 
       # 配置是编译期固化的：先检查 require_signature 和 secret 是否自洽。
       - name: Check signing configuration
@@ -76,6 +79,12 @@ jobs:
           if ($requireSignature -ne "true" -and $hasSecret) {
             Write-Warning "已配置签名 secret，但 require_signature=false：会签名，但客户端不会强制验签。"
           }
+          if ($hasSecret) {
+            $keys = @((Get-Content resources/update-trusted-keys.json -Raw | ConvertFrom-Json).keys)
+            if ($keys.Count -eq 0) {
+              throw "已配置 UPDATE_SIGNING_KEY，但 resources/update-trusted-keys.json 里没有公钥。先运行 tools/new-release-key.ps1 并提交公钥文件。"
+            }
+          }
 
       - name: Build updater (Rust)
         run: cargo build --release --target x86_64-pc-windows-msvc
@@ -86,11 +95,14 @@ jobs:
 
       - name: Package portable zip and metadata
         shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
         run: |
           $ErrorActionPreference = "Stop"
 
-          $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' |
-            Select-Object -First 1).Matches[0].Groups[1].Value
+          # 版本以 tag 为准，不再依赖 Cargo.toml：打 v0.5.1 就发 0.5.1。
+          $version = $env:RELEASE_VERSION
+          if ([string]::IsNullOrWhiteSpace($version)) { throw "没有解析到发布版本号" }
           $product = ((Get-Content updater.conf | Where-Object { $_ -match '^product=' }) -split '=')[1].Trim()
           $zipName = "$product-$version-windows-x64-portable.zip"
 
@@ -166,3 +178,5 @@ jobs:
             build/out/*.zip
             build/out/*.sha256
           fail_on_unmatched_files: true
+
+

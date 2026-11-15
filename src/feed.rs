@@ -165,12 +165,7 @@ fn remote_base(url: &str) -> String {
     }
 }
 
-/// 从 Release tag 解析版本号：`v0.4.0`、`v1.5.7_snow-shot`、`v1.5.7-beta` 都支持。
-pub fn version_from_tag(tag: &str) -> Option<semver::Version> {
-    let text = tag.trim().trim_start_matches(['v', 'V']);
-    let text = text.split('_').next().unwrap_or(text);
-    semver::Version::parse(text).ok()
-}
+
 
 /// 取回元数据：`feed_url` 支持本地文件或直链，否则从 Release 资产里找 `feed_name`。
 pub fn resolve(
@@ -236,22 +231,6 @@ pub fn resolve(
     let raw = http_text(client, &url)?;
     let text = crate::contract::unwrap_feed(&raw, cfg.require_signature)?;
     let mut feed = parse(&text, cfg)?;
-
-    // 版本以 tag 为准，同时要求签名 payload 里的 version 与 tag 一致：
-    // 防止有人把旧包挂到新 tag 上，或者反过来。
-    let tag = release
-        .get("tag_name")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    if let Some(tag_version) = version_from_tag(tag) {
-        if feed.version != tag_version {
-            return Err(AppError::Verify(format!(
-                "tag `{tag}` 与元数据版本 `{}` 不一致",
-                feed.version
-            )));
-        }
-    }
-
     feed.base = Base::Remote(remote_base(&url));
     Ok(feed)
 }
@@ -341,5 +320,6 @@ mod tests {
         );
     }
 }
+
 
 

@@ -42,15 +42,14 @@ require_signature=false
 - 发布包里没有 ini/json，用户改不了也丢不了；本地调试可用 `--config xxx.json` 或
   `UPDATER_CONFIG` 环境变量覆盖。
 
-## 3. 版本号从 tag 来
+## 3. 版本号只看 tag
 
-`/releases/latest` 的 `tag_name` 决定版本：
+打什么 tag 就发什么版本，CI 用 tag 推导出的版本命名 zip、写 `version.txt`、写 feed：
 
-- `v0.5.0` → `0.5.0`
+- `v0.5.2` → `0.5.2`
 - `v1.5.7_snow-shot` → `1.5.7`（下划线后缀丢弃，兼容 snow-shot 的命名）
 
-拿到签名元数据后还会**交叉校验**：payload 里的 `version` 必须等于 tag 推导出的版本，
-否则拒绝更新——防止有人把旧包挂到新 tag 上。
+`Cargo.toml` 里的 version 只是这个工具自身的编号，不再参与发布；改不改都不影响出包版本。
 
 ## 4. 为什么既有 feed、又有 `.sha256`
 
@@ -92,6 +91,7 @@ generic-updater.exe --download              # 下载 + 验签 + 校验 + 解压�
 generic-updater.exe --apply --parent-pid 1234
 generic-updater.exe --recover               # 事务恢复
 generic-updater.exe --clean                 # 清缓存
+generic-updater.exe --verify-feed latest-version-windows-x64.json   # 本地校验签名
 generic-updater.exe --check -c test.json    # 调试：覆盖内置配置
 ```
 
@@ -102,18 +102,33 @@ generic-updater.exe --check -c test.json    # 调试：覆盖内置配置
 信封：`{"schema":1,"keyId":"...","payload":"<base64>","signature":"<base64>"}`，
 签名对象是 payload 的原始 UTF-8 字节，RSA-PSS + SHA-256 + salt 32，密钥 3072 位。
 
+**没配 secret 的时候 feed 就是明文 JSON**——这是默认状态，不是坏了。开启签名要四步：
+
 ```powershell
-# 1) 生成密钥（私钥放仓库外）
+# 1) 生成密钥：私钥必须放仓库外，公钥写进仓库
 powershell -File tools/new-release-key.ps1 `
   -PrivateKeyPath D:\keys\update-signing.pem `
   -PublicKeysPath resources/update-trusted-keys.json `
   -KeyId generic-updater-2026-01
-
-# 2) 私钥内容放进 GitHub Secret：UPDATE_SIGNING_KEY
-# 3) 提交公钥文件，把 updater.conf 的 require_signature 改成 true，再打 tag
 ```
 
-CI 会检查一致性：`require_signature=true` 但没配 secret 时直接失败，避免发出装不上的包。
+2. 打开私钥文件，把**整段 PEM**（含 `-----BEGIN PRIVATE KEY-----`）复制出来；
+3. GitHub 仓库 → Settings → Secrets and variables → Actions → New repository secret，
+   名称 `UPDATE_SIGNING_KEY`，值粘贴 PEM；
+4. 把 `resources/update-trusted-keys.json` 提交，并把 `updater.conf` 的
+   `require_signature` 改成 `true`，然后打 tag。
+
+发布后这样确认签名生效（不用装客户端）：
+
+```powershell
+# 下载 release 里的 latest-version-windows-x64.json，首字符应该是 { 且含 "payload"/"signature"
+# 然后本地校验：
+generic-updater.exe --verify-feed latest-version-windows-x64.json
+# 输出：签名有效: keyId=generic-updater-2026-01 version=0.5.2 packages=1
+```
+
+CI 有两道保险：`require_signature=true` 但没配 secret → 直接失败；配了 secret 但公钥文件为空
+→ 提示先跑密钥生成脚本。所以不会出现"发了签名包却装不上"或"设了 secret 却还是明文"。
 
 ## 9. 发布说明
 
@@ -145,3 +160,5 @@ cargo test                            # 15 个单测（含签名、journal、文
 - **没有 Authenticode 证书**：SmartScreen 仍提示未知发布者；元数据签名不等于代码签名。
 - **断电恢复依赖 journal 落盘**：极端情况（journal 写一半断电）仍需 `--clean`。
 - **平台**：Windows x64 已实测；其他平台只有裸编译路径。
+
+

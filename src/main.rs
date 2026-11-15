@@ -22,6 +22,7 @@ const USAGE: &str = "\
   --apply            应用已下载的更新：备份、覆盖、清理、拉起新版
   --recover          只做事务恢复（上次安装中途崩溃时按备份回滚）
   --clean            清掉下载缓存与暂存目录
+  --verify-feed <json> 本地校验发布 feed 的签名，打印 keyId 与版本
 
 选项:
   --parent-pid <pid> 主程序 PID，安装前精确等待它退出
@@ -39,10 +40,15 @@ fn main() {
     let mut parent_pid: Option<u32> = None;
     let mut mode: Option<Mode> = None;
     let mut unknown: Option<String> = None;
+    let mut verify_feed: Option<String> = None;
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--verify-feed" => {
+                i += 1;
+                verify_feed = args.get(i).cloned();
+            }
             "--check" => mode = Some(Mode::Check { automatic }),
             "--auto" => {
                 mode.get_or_insert(Mode::Check { automatic: true });
@@ -69,6 +75,16 @@ fn main() {
     if let Some(value) = unknown {
         eprintln!("未知参数: {value}\n\n{USAGE}");
         std::process::exit(1);
+    }
+
+    if let Some(path) = verify_feed {
+        match update::verify_feed(&path) {
+            Ok(code) => std::process::exit(code),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
     }
 
     let mode = match mode {

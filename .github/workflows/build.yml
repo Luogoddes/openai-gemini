@@ -84,7 +84,9 @@ jobs:
           # snow-shot 风格的旁置校验文件，方便手工核对
           Set-Content -Path "dist/$zipName.sha256" -Value "$sha  $zipName" -Encoding ascii
 
-          $notes = (git log -1 --pretty=%B).Trim()
+          # git log 在 PowerShell 里是按行返回的字符串数组，先 join 成多行文本再 trim，
+          # 否则 ConvertTo-Json 会把 notes 变成数组，客户端按字符串解析就会失败。
+          $notes = ((git log -1 --pretty=%B) -join "`n").Trim()
           $feed = [ordered]@{
             schema      = 1
             product     = $product

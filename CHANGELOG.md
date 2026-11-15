@@ -12,6 +12,8 @@ CI 会按版本号从本文件里抽出对应小节，同时用于 Release 说�
 ### 修改
 - 版本完全跟随 tag：资产名、`version.txt`、feed 里的 version 都用 tag 推导的版本
 - 去掉 tag 与 feed 的交叉校验，避免打了 tag 但没改 Cargo.toml 时客户端拒更新
+- 密钥生成脚本兼容 Windows PowerShell 5.1（手工编码 PKCS#1 PEM），脚本统一加 UTF-8 BOM，避免 5.1 按 ANSI 解析中文报错
+- 签名脚本在 PowerShell 5.1 下给出明确提示（需要 PowerShell 7 / pwsh）
 
 ### 删除
 - 无
@@ -46,3 +48,4 @@ CI 会按版本号从本文件里抽出对应小节，同时用于 Release 说�
 
 ### 删除
 - 移除"安装目录不可写时静默失败"的行为
+

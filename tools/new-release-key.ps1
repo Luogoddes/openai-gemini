@@ -1,16 +1,16 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  生成 3072 位 RSA 发布签名密钥，并输出可编译进客户端的公钥列表。
+  Generate a 3072-bit RSA release signing key and the embedded public-key list.
 
 .DESCRIPTION
-  与 snow-shot 的做法一致：
-    * 私钥用 PKCS#8 PEM，必须放在仓库之外的独立目录，且目录里不能有别的东西；
-    * 公钥写成 { "keys": [ { "id", "modulus", "exponent" } ] }，base64 编码；
-    * 拒绝覆盖已存在的密钥，避免误操作导致老版本客户端再也验不过签名。
+  Works on Windows PowerShell 5.1 as well as PowerShell 7:
+  .NET Framework has no ExportPkcs8PrivateKeyPem, so the PKCS#1 PEM is encoded here
+  by hand from RSAParameters. The signing script (tools/sign-feed.ps1) imports it
+  via ImportFromPem, which accepts both PKCS#1 and PKCS#8 PEM.
 
 .EXAMPLE
-  powershell -File tools/new-release-key.ps1 `
+  powershell -ExecutionPolicy Bypass -File tools/new-release-key.ps1 `
     -PrivateKeyPath D:\keys\update-signing.pem `
     -PublicKeysPath resources/update-trusted-keys.json `
     -KeyId generic-updater-2026-01
@@ -28,40 +28,103 @@ $PublicKeysPath = [IO.Path]::GetFullPath($PublicKeysPath)
 $repoPrefix = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
 
 if ($PrivateKeyPath.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-    throw '私钥不能放在仓库里。'
+    throw 'Private key must live outside the repository.'
 }
 if ($PrivateKeyPath.Equals($PublicKeysPath, [StringComparison]::OrdinalIgnoreCase)) {
-    throw '私钥和公钥输出路径不能相同。'
+    throw 'Private key and public key output must be different paths.'
 }
-if (Test-Path -LiteralPath $PrivateKeyPath) { throw '私钥已存在，拒绝覆盖。' }
-if (Test-Path -LiteralPath $PublicKeysPath) { throw '公钥文件已存在，拒绝覆盖。' }
+if (Test-Path -LiteralPath $PrivateKeyPath) { throw 'Private key already exists; refusing to overwrite.' }
+if (Test-Path -LiteralPath $PublicKeysPath) { throw 'Public key file already exists; refusing to overwrite.' }
 
 $privateDirectory = Split-Path -Parent $PrivateKeyPath
 if ((Test-Path -LiteralPath $privateDirectory) -and @(Get-ChildItem -LiteralPath $privateDirectory -Force).Count -gt 0) {
-    throw '请给私钥用一个空目录。'
+    throw 'Use an empty dedicated directory for the private key.'
 }
 $null = New-Item -ItemType Directory -Force -Path $privateDirectory
 
-$acl = [Security.AccessControl.DirectorySecurity]::new()
+# Lock the key directory down to the current user.
+$acl = New-Object Security.AccessControl.DirectorySecurity
 $acl.SetAccessRuleProtection($true, $false)
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent().User
-$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
-    $identity, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))
+$rule = New-Object Security.AccessControl.FileSystemAccessRule(
+    $identity, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+$acl.AddAccessRule($rule)
 Set-Acl -LiteralPath $privateDirectory -AclObject $acl
+
+function Get-DerLength([int]$length) {
+    if ($length -lt 0x80) { return ,([byte[]]@($length)) }
+    $buffer = New-Object System.Collections.Generic.List[byte]
+    $value = $length
+    while ($value -gt 0) {
+        $buffer.Insert(0, [byte]($value -band 0xFF))
+        $value = $value -shr 8
+    }
+    $result = New-Object System.Collections.Generic.List[byte]
+    $result.Add([byte](0x80 -bor $buffer.Count))
+    $result.AddRange($buffer)
+    return ,([byte[]]$result.ToArray())
+}
+
+function Get-DerInteger([byte[]]$bytes) {
+    $start = 0
+    while ($start -lt $bytes.Length - 1 -and $bytes[$start] -eq 0) { $start++ }
+    $content = New-Object System.Collections.Generic.List[byte]
+    for ($i = $start; $i -lt $bytes.Length; $i++) { $content.Add($bytes[$i]) }
+    if (($content[0] -band 0x80) -ne 0) { $content.Insert(0, [byte]0) }
+    $length = Get-DerLength $content.Count
+    $result = New-Object System.Collections.Generic.List[byte]
+    $result.Add([byte]0x02)
+    $result.AddRange([byte[]]$length)
+    $result.AddRange($content)
+    return ,([byte[]]$result.ToArray())
+}
+
+function Get-Pkcs1Pem([System.Security.Cryptography.RSAParameters]$parameters) {
+    $body = New-Object System.Collections.Generic.List[byte]
+    $body.AddRange([byte[]](Get-DerInteger ([byte[]]@(0))))            # version 0
+    $body.AddRange([byte[]](Get-DerInteger $parameters.Modulus))
+    $body.AddRange([byte[]](Get-DerInteger $parameters.Exponent))
+    $body.AddRange([byte[]](Get-DerInteger $parameters.D))
+    $body.AddRange([byte[]](Get-DerInteger $parameters.P))
+    $body.AddRange([byte[]](Get-DerInteger $parameters.Q))
+    $body.AddRange([byte[]](Get-DerInteger $parameters.DP))
+    $body.AddRange([byte[]](Get-DerInteger $parameters.DQ))
+    $body.AddRange([byte[]](Get-DerInteger $parameters.InverseQ))
+
+    $sequence = New-Object System.Collections.Generic.List[byte]
+    $sequence.Add([byte]0x30)
+    $sequence.AddRange([byte[]](Get-DerLength $body.Count))
+    $sequence.AddRange($body)
+
+    $base64 = [Convert]::ToBase64String([byte[]]$sequence.ToArray())
+    $lines = New-Object System.Collections.Generic.List[string]
+    for ($offset = 0; $offset -lt $base64.Length; $offset += 64) {
+        $lines.Add($base64.Substring($offset, [Math]::Min(64, $base64.Length - $offset)))
+    }
+    $pem = "-----BEGIN RSA PRIVATE KEY-----`n" + ($lines -join "`n") + "`n-----END RSA PRIVATE KEY-----`n"
+    return $pem
+}
 
 $rsa = [Security.Cryptography.RSA]::Create(3072)
 try {
-    [IO.File]::WriteAllText($PrivateKeyPath, $rsa.ExportPkcs8PrivateKeyPem(), [Text.UTF8Encoding]::new($false))
-    $parameters = $rsa.ExportParameters($false)
-    $public = @{ keys = @(@{
-        id = $KeyId
-        modulus = [Convert]::ToBase64String($parameters.Modulus)
-        exponent = [Convert]::ToBase64String($parameters.Exponent)
-    }) } | ConvertTo-Json -Depth 5
-    [IO.File]::WriteAllText($PublicKeysPath, $public + "`n", [Text.UTF8Encoding]::new($false))
+    $privateParameters = $rsa.ExportParameters($true)
+    $pem = Get-Pkcs1Pem $privateParameters
+    [IO.File]::WriteAllText($PrivateKeyPath, $pem, (New-Object Text.UTF8Encoding($false)))
+
+    $public = $rsa.ExportParameters($false)
+    $keys = [ordered]@{
+        keys = @([ordered]@{
+            id      = $KeyId
+            modulus = [Convert]::ToBase64String($public.Modulus)
+            exponent = [Convert]::ToBase64String($public.Exponent)
+        })
+    }
+    [IO.File]::WriteAllText($PublicKeysPath, (($keys | ConvertTo-Json -Depth 5) + "`n"), (New-Object Text.UTF8Encoding($false)))
 } finally {
     $rsa.Dispose()
 }
 
-Write-Output "已生成签名密钥 '$KeyId'。私钥请离线备份，永远不要提交；公钥已写入 $PublicKeysPath。"
-Write-Output '把私钥内容放进 GitHub Secret（例如 UPDATE_SIGNING_KEY），并把公钥文件提交后再构建客户端。'
+Write-Output "Created signing key '$KeyId'."
+Write-Output "Private key: $PrivateKeyPath  (never commit this file)"
+Write-Output "Public keys: $PublicKeysPath  (commit this file)"
+Write-Output 'Next: put the private key PEM into the UPDATE_SIGNING_KEY GitHub secret, commit the public key file, and set require_signature=true in updater.conf.'

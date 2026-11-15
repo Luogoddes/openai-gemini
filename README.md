@@ -112,7 +112,10 @@ powershell -File tools/new-release-key.ps1 `
   -KeyId generic-updater-2026-01
 ```
 
-2. 打开私钥文件，把**整段 PEM**（含 `-----BEGIN PRIVATE KEY-----`）复制出来；
+> 密钥生成脚本兼容 Windows PowerShell 5.1；`tools/sign-feed.ps1` 需要 PowerShell 7（CI 用的就是 `pwsh`）。
+> 本地只生成密钥的话，`powershell` 就够。
+
+2. 打开私钥文件，把**整段 PEM**（含 `-----BEGIN RSA PRIVATE KEY-----`）复制出来；
 3. GitHub 仓库 → Settings → Secrets and variables → Actions → New repository secret，
    名称 `UPDATE_SIGNING_KEY`，值粘贴 PEM；
 4. 把 `resources/update-trusted-keys.json` 提交，并把 `updater.conf` 的
@@ -160,5 +163,6 @@ cargo test                            # 15 个单测（含签名、journal、文
 - **没有 Authenticode 证书**：SmartScreen 仍提示未知发布者；元数据签名不等于代码签名。
 - **断电恢复依赖 journal 落盘**：极端情况（journal 写一半断电）仍需 `--clean`。
 - **平台**：Windows x64 已实测；其他平台只有裸编译路径。
+
 
 

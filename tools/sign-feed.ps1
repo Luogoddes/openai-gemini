@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   给更新元数据签上 RSA-PSS 信封（schema / keyId / payload / signature）。
@@ -25,6 +25,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# .NET Framework (Windows PowerShell 5.1) 没有 ImportFromPem / PSS 支持，签名统一在 PS7 下做。
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    throw 'sign-feed.ps1 需要 PowerShell 7（pwsh）。CI 用的是 pwsh；本地可用 `pwsh -File tools/sign-feed.ps1 ...`。'
+}
 $FeedPath = [IO.Path]::GetFullPath($FeedPath)
 $PrivateKeyPath = [IO.Path]::GetFullPath($PrivateKeyPath)
 $PublicKeysPath = [IO.Path]::GetFullPath($PublicKeysPath)

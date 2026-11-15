@@ -1,0 +1,7 @@
+{
+  "repo": "your-name/your-app",
+  "asset_name": "your-app-windows-x64.zip",
+  "version_file": "version.txt",
+  "install_dir": ".",
+  "exe_name": "your-app.exe"
+}

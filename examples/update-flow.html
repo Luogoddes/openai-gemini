@@ -139,11 +139,49 @@ header .spacer{flex:1}
 .tstep.active .tn{color:var(--accent2)}
 .tstep.done{opacity:.85;border-color:rgba(63,220,143,.4)}
 .tstep.done .tn{color:var(--ok)}
-/* ── 静态说明 ── */
-.explain{margin-top:22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
-.explain .card p{font-size:.8rem;color:var(--muted)}
-.explain .card p b{color:var(--ink)}
-.explain .card p code{font:.74rem var(--mono);color:var(--accent2);background:var(--panel2);padding:1px 5px;border-radius:4px}
+/* ── 科普图解卡（白底彩框 · 卡通流） ── */
+.ig-grid{margin-top:22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(370px,1fr));gap:16px}
+.ig{--igc:#2f6fed;--igbd:#b9d2f8;--igbg:#eff5ff;background:#fff;border:2px solid var(--igc);border-radius:16px;padding:14px 16px 12px;color:#22314a;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+.ig.pink{--igc:#e8618c;--igbd:#f5bfd2;--igbg:#fdf1f6}
+.ig.green{--igc:#33a852;--igbd:#b4e0c1;--igbg:#f0faf3}
+.ig.orange{--igc:#ef8a3c;--igbd:#f6d0ac;--igbg:#fef6ee}
+.ig.purple{--igc:#8b5cf6;--igbd:#d3c1fa;--igbg:#f6f2ff}
+.ig.teal{--igc:#0ea5a4;--igbd:#a5e3e2;--igbg:#effafa}
+.ig-title{width:max-content;max-width:100%;margin:0 auto 13px;background:var(--igc);color:#fff;font-weight:800;font-size:1rem;letter-spacing:.08em;padding:7px 20px;border-radius:9px;text-align:center}
+.ig-row{display:flex;align-items:center;gap:6px}
+.ig-row+.ig-row{margin-top:8px}
+.ig-dn{text-align:center;color:var(--igc);font:700 .85rem/1 var(--mono);margin:3px 0}
+.ig-node{position:relative;flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:4px;background:#fff;border:1.5px solid var(--igbd);border-radius:12px;padding:8px 10px;min-width:76px;text-align:center}
+.ig-node .ic{font-size:1.55rem;line-height:1.15}
+.ig-node .nm{font-size:.74rem;font-weight:800;color:#22314a;line-height:1.25}
+.ig-node .sb{font:.62rem/1.35 var(--mono);color:#7a8aa0;word-break:break-all}
+.ig-node.hl{border-color:var(--igc);background:var(--igbg)}
+.ig-node.bad{border-color:#f0a3ab;background:#fff5f6}
+.ig-node.bad .nm{color:#c2384a}
+.ig-node .num{position:absolute;top:-8px;left:-8px;width:18px;height:18px;border-radius:50%;background:var(--igc);color:#fff;font:700 .62rem/18px var(--mono);text-align:center}
+.ig-arr{flex:1 1 24px;min-width:20px;position:relative;height:0;border-top:2px dashed var(--igc);margin:0 2px}
+.ig-arr::after{content:'';position:absolute;right:-2px;top:-6px;border:5px solid transparent;border-left:8px solid var(--igc)}
+.ig-arr.solid{border-top-style:solid}
+.ig-cap{flex:0 0 auto;font:.62rem/1.3 var(--mono);color:var(--igc);max-width:88px;text-align:center}
+.ig-packet{display:flex;margin-top:12px;border-radius:8px;overflow:hidden;font:.64rem/1.5 var(--mono);color:#fff;text-align:center}
+.ig-packet span{padding:6px 6px}
+.ig-packet .s1{background:#1e40af;flex:1.1}
+.ig-packet .s2{background:#2563eb;flex:1}
+.ig-packet .s3{background:#3b82f6;flex:1}
+.ig-packet .s4{background:#60a5fa;flex:1}
+.ig-list{border:1.5px solid var(--igbd);border-radius:10px;padding:8px 12px;margin-top:12px;font-size:.73rem;line-height:1.7;color:#3a4a63;background:var(--igbg)}
+.ig-list b{color:var(--igc)}
+.ig-note{margin-top:9px;font-size:.68rem;color:#93a1b5;text-align:center;line-height:1.5}
+.ig-codes{display:flex;gap:10px;margin-top:12px}
+.ig-code{flex:1;border-radius:12px;border:1.5px solid var(--igbd);background:var(--igbg);text-align:center;padding:10px 4px 8px}
+.ig-code b{display:block;font:800 1.45rem/1.2 var(--mono);color:var(--igc)}
+.ig-code span{font-size:.68rem;color:#5a6b80}
+.ig-cols{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+.ig-col{flex:1;border:1.5px solid var(--igbd);border-radius:10px;background:#fff;padding:8px 10px;min-width:180px}
+.ig-col h5{font-size:.72rem;color:var(--igc);margin-bottom:4px;display:flex;align-items:center;gap:5px}
+.ig-col ul{list-style:none;font:.7rem/1.85 var(--mono);color:#3a4a63}
+.ig.hero{grid-column:1/-1}
+.ig-hero-row{display:flex;align-items:center;gap:8px;overflow-x:auto;padding:4px 2px}
 .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:.75rem;color:var(--muted);padding:10px 14px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px}
 /* 红点流层 */
@@ -245,13 +283,155 @@ footer{margin-top:26px;border-top:1px solid var(--rule);padding-top:14px;color:v
     <div class="tl" id="timeline"></div>
   </div>
 
-  <div class="explain">
-    <div class="card"><h3>检查链路</h3><div class="pad"><p>主程序把更新器当<b>子进程</b>用：<code>--check --auto</code> 拉起，更新器从 <code>stdout</code> 按行输出 JSON 状态帧，主程序逐行读并渲染界面。配置（repo / feed 名 / exe 名）在编译期从 <code>updater.conf</code> 写死进二进制；<code>interval_hours</code> 控制 24h 自动检查，结果缓存进 <code>state.json</code>。</p></div></div>
-    <div class="card"><h3>下载与校验</h3><div class="pad"><p>下载写到缓存目录的 <code>.part</code> 临时文件，支持 HTTP <b>Range 断点续传</b>（206 + Content-Range 起点校验，416 则重置重下）；总超时 30 分钟、失败退避重试 3 次。完成后做<b>大小 + 整文件 SHA256</b> 校验，通过才原子改名就位——无签名发行 ≠ 不校验。</p></div></div>
-    <div class="card"><h3>事务式安装</h3><div class="pad"><p>动文件前先把「写哪些 / 删哪些 / 备份在哪」全部落进 <code>journal.json</code>（v2，含 write/delete 条目）。旧文件备份到 <code>backup/</code>；新版删掉的旧文件移入 <code>backup/__deleted__/</code> 而不是直接删。运行中的更新器<b>不能被覆盖</b>：先改名 <code>.old-&lt;pid&gt;</code> 再写新镜像，下次启动清理。装完重写隐藏清单 <code>.update-files.json</code> 并标记 committed。</p></div></div>
-    <div class="card"><h3>失败与回滚</h3><div class="pad"><p>恢复顺序是<b>先回滚、后清理</b>——反过来会把要用的备份删掉。新版拉起后观察 3 秒，进程提前退出即判定失败：按 journal 还原备份、放回被删文件、version.txt 回退，再拉起旧版本。回滚失败则保留 journal 与备份，下次启动继续恢复。</p></div></div>
-    <div class="card"><h3>目录约定</h3><div class="pad"><p><b>安装目录</b>只留程序本体、<code>version.txt</code> 和隐藏清单；<b>缓存目录</b>（%LOCALAPPDATA% 下按安装目录哈希隔离）放 zip / .part / staging / backup / journal / state.json / <code>updater.lock</code>。锁用 <code>create_new</code> 原子创建，pid 已死的陈旧锁自动接管。</p></div></div>
-    <div class="card"><h3>退出码与跳过</h3><div class="pad"><p>退出码契约：<code>0</code> 无更新 / <code>2</code> 有更新或成功 / <code>1</code> 失败。「跳过此版本」走 <code>--skip &lt;version&gt;</code> 写进 state.json，之后 Available 帧带 <code>skipped:true</code>，「取消跳过」走 <code>--unskip</code>。UAC 提权安装时透传 <code>--cache</code>，换账户也读得到待安装信息。</p></div></div>
+  <div class="ig-grid">
+
+    <!-- 总览条 -->
+    <div class="ig hero">
+      <div class="ig-title">一图看懂 · 更新全流程</div>
+      <div class="ig-hero-row">
+        <div class="ig-node"><span class="num">1</span><span class="ic">🖱️</span><span class="nm">用户双击</span><span class="sb">MyApp v0.5.9</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node"><span class="num">2</span><span class="ic">🧩</span><span class="nm">主程序拉起更新器</span><span class="sb">--check --auto</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node"><span class="num">3</span><span class="ic">☁️</span><span class="nm">GitHub Release</span><span class="sb">签名 feed + zip</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node"><span class="num">4</span><span class="ic">🧮</span><span class="nm">双重校验</span><span class="sb">RSA-PSS + SHA256</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node"><span class="num">5</span><span class="ic">📦</span><span class="nm">缓存暂存</span><span class="sb">.part → zip → staging</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node"><span class="num">6</span><span class="ic">🔄</span><span class="nm">重启 · 事务替换</span><span class="sb">journal + backup</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node hl"><span class="num">7</span><span class="ic">🚀</span><span class="nm">新版拉起</span><span class="sb">3 秒探测 · v0.6.0</span></div>
+      </div>
+      <div class="ig-row" style="margin-top:12px">
+        <div class="ig-node bad"><span class="ic">❌</span><span class="nm">探测失败</span><span class="sb">3 秒内进程退出</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node"><span class="ic">⏪</span><span class="nm">journal 还原</span><span class="sb">backup 拷回 · 删除放回</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node"><span class="ic">🚀</span><span class="nm">旧版拉起</span><span class="sb">v0.5.9 · exit 1</span></div>
+        <div class="ig-cap">← 只有新版启动失败才走这条红色支线</div>
+      </div>
+      <div class="ig-note">上半行是正常更新主干（exit 2 成功）；下半行红色支线是自动回滚保险，正常更新根本不会路过。</div>
+    </div>
+
+    <!-- 检查链路 -->
+    <div class="ig pink">
+      <div class="ig-title">检查链路</div>
+      <div class="ig-row">
+        <div class="ig-node"><span class="ic">💻</span><span class="nm">MyApp 主程序</span><span class="sb">父进程</span></div>
+        <div class="ig-arr"></div><div class="ig-cap">spawn 子进程</div><div class="ig-arr"></div>
+        <div class="ig-node"><span class="ic">🧩</span><span class="nm">generic-updater</span><span class="sb">--check --auto</span></div>
+        <div class="ig-arr"></div><div class="ig-cap">GET feed</div><div class="ig-arr"></div>
+        <div class="ig-node"><span class="ic">☁️</span><span class="nm">GitHub</span><span class="sb">latest.json</span></div>
+      </div>
+      <div class="ig-row">
+        <div class="ig-node hl"><span class="ic">💻</span><span class="nm">逐行读 stdout</span><span class="sb">渲染更新界面</span></div>
+        <div class="ig-arr"></div><div class="ig-cap">JSON 状态帧</div><div class="ig-arr"></div>
+        <div class="ig-node"><span class="ic">🧩</span><span class="nm">输出一行 JSON</span><span class="sb">每变一步推一帧</span></div>
+      </div>
+      <div class="ig-packet"><span class="s1">{"protocol":2</span><span class="s2">"type":"status"</span><span class="s3">"state":"Available"</span><span class="s4">"version":"0.6.0" …}</span></div>
+      <div class="ig-list"><b>节流与缓存：</b>24h 自动检查一次，结果写进 state.json——24h 内不联网也用缓存提示「有更新」，绝不假装「已是最新」。</div>
+      <div class="ig-note">repo / feed 名 / exe 名等配置在编译期从 updater.conf 写死进二进制，发布只有一个 exe。</div>
+    </div>
+
+    <!-- 下载与校验 -->
+    <div class="ig blue">
+      <div class="ig-title">下载与校验</div>
+      <div class="ig-row">
+        <div class="ig-node"><span class="ic">☁️</span><span class="nm">GitHub</span><span class="sb">Release 资产</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node"><span class="ic">💾</span><span class="nm">流式写 .part</span><span class="sb">缓存目录</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node"><span class="ic">🧮</span><span class="nm">大小 + SHA256</span><span class="sb">整文件哈希</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node hl"><span class="ic">✅</span><span class="nm">原子改名 zip</span><span class="sb">校验过才就位</span></div>
+      </div>
+      <div class="ig-packet"><span class="s1">GET …/pkg.zip → 200</span><span class="s2">Range: bytes=1361920- → 206</span><span class="s3">Content-Range 起点校验</span></div>
+      <div class="ig-list"><b>断点续传：</b>起点不对直接重下，拼坏文件是不可能的；416 也重置重下。</div>
+      <div class="ig-note">总超时 30 分钟 · 失败退避 1s/2s 重试 3 次 · .part 保留供续传 · 无签名发行 ≠ 不校验，验签不过直接丢弃。</div>
+    </div>
+
+    <!-- 事务式安装 -->
+    <div class="ig green">
+      <div class="ig-title">事务式安装</div>
+      <div class="ig-row">
+        <div class="ig-node"><span class="ic">🧾</span><span class="nm">journal.json</span><span class="sb">先计划后动手</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node"><span class="ic">💾</span><span class="nm">旧文件备份</span><span class="sb">→ backup/</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node"><span class="ic">📦</span><span class="nm">staging/ 解压</span><span class="sb">还没碰安装目录</span></div>
+      </div>
+      <div class="ig-dn">↓</div>
+      <div class="ig-row">
+        <div class="ig-node"><span class="ic">🔁</span><span class="nm">自己改名旁置</span><span class="sb">.old-&lt;pid&gt;</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node hl"><span class="ic">✍️</span><span class="nm">覆盖安装目录</span><span class="sb">staging → 安装目录</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node"><span class="ic">📋</span><span class="nm">清单重写</span><span class="sb">.update-files.json</span></div>
+      </div>
+      <div class="ig-list"><b>删除也入事务：</b>新版不要的 legacy.dll 移进 backup/__deleted__/ 而不是直接删——回滚能原样放回。</div>
+      <div class="ig-note">运行中的更新器不能被覆盖（Windows 锁镜像）：先改名再写新镜像，下次启动清理。committed 前掉电，下次启动按 journal 还原。</div>
+    </div>
+
+    <!-- 失败与回滚 -->
+    <div class="ig orange">
+      <div class="ig-title">失败与回滚</div>
+      <div class="ig-row">
+        <div class="ig-node"><span class="ic">🚀</span><span class="nm">新版拉起</span><span class="sb">DETACHED 独立进程</span></div>
+        <div class="ig-arr"></div><div class="ig-cap">观察 3 秒</div><div class="ig-arr"></div>
+        <div class="ig-node bad"><span class="ic">❌</span><span class="nm">提前退出</span><span class="sb">判定启动失败</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node"><span class="ic">⏪</span><span class="nm">journal 还原</span><span class="sb">逐条回放</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node hl"><span class="ic">🚀</span><span class="nm">旧版拉起</span><span class="sb">exit 1</span></div>
+      </div>
+      <div class="ig-list"><b>还原三件事：</b>backup/ 的旧文件拷回去 · __deleted__/ 里的放回原位 · version.txt 回退旧版本号。还原成功才删 journal；失败则保留现场，下次启动继续恢复。</div>
+      <div class="ig-note">顺序是先回滚、后清理——反了会把要用的备份删掉。用户最多看到一次黑场，软件「还在」。</div>
+    </div>
+
+    <!-- 目录约定 -->
+    <div class="ig purple">
+      <div class="ig-title">目录约定</div>
+      <div class="ig-cols">
+        <div class="ig-col">
+          <h5>📁 安装目录 D:\MyApp\</h5>
+          <ul>
+            <li>MyApp.exe</li>
+            <li>generic-updater.exe</li>
+            <li>version.txt（包内替换）</li>
+            <li>.update-files.json（隐藏清单）</li>
+          </ul>
+        </div>
+        <div class="ig-col">
+          <h5>📁 缓存 %LOCALAPPDATA%\GenericUpdater\</h5>
+          <ul>
+            <li>updates\&lt;hash&gt;\ · zip · .part</li>
+            <li>staging\ · backup\ · journal.json</li>
+            <li>state.json · 🔒 updater.lock</li>
+          </ul>
+        </div>
+      </div>
+      <div class="ig-list"><b>隔离与锁：</b>缓存目录按安装路径哈希隔离，互不串台；锁用 create_new 原子创建，跨进程互斥，pid 已死的陈旧锁自动接管。</div>
+      <div class="ig-note">安装目录只留程序本体 + 版本文件 + 隐藏清单，其余全放缓存——清缓存不伤安装目录。</div>
+    </div>
+
+    <!-- 退出码与跳过 -->
+    <div class="ig teal">
+      <div class="ig-title">退出码与跳过</div>
+      <div class="ig-codes">
+        <div class="ig-code"><b>0</b><span>无更新 · 已是最新</span></div>
+        <div class="ig-code"><b>2</b><span>有更新 / 更新成功</span></div>
+        <div class="ig-code"><b>1</b><span>失败 · 已回滚</span></div>
+      </div>
+      <div class="ig-row" style="margin-top:12px">
+        <div class="ig-node"><span class="ic">🚫</span><span class="nm">--skip 0.6.0</span><span class="sb">写进 state.json</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node"><span class="ic">📭</span><span class="nm">Available 帧</span><span class="sb">skipped:true</span></div>
+        <div class="ig-arr"></div>
+        <div class="ig-node hl"><span class="ic">♻️</span><span class="nm">--unskip</span><span class="sb">取消跳过恢复提示</span></div>
+      </div>
+      <div class="ig-note">UAC 提权安装时透传 --cache，换账户也读得到待安装信息；跳过状态在 state.json，不污染安装目录。</div>
+    </div>
   </div>
 
   <footer>本页面为 generic-updater（v0.6.0）的流程演示，帧格式、目录、退出码均与真实实现一致；时序为教学目的加速。源码见仓库 src/，设计文档见 docs/01～03。</footer>

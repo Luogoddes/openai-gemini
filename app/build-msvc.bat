@@ -1,10 +1,14 @@
 @echo off
 rem Build the Win32 GUI client with MSVC.
+rem Configuration is compiled in from ..\updater.conf (no runtime ini).
 rem Set MSVC_SETUP to a vcvars/setup script to prepare the compiler environment, e.g.
 rem   set MSVC_SETUP=E:\NuitkaGUI\msvc\setup_x64.bat
 setlocal
 set ROOT=%~dp0..
 if not exist "%ROOT%\dist" mkdir "%ROOT%\dist"
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\tools\gen-app-config.ps1" -ConfPath "%ROOT%\updater.conf" -OutPath "%ROOT%\app\build-config.h"
+if errorlevel 1 exit /b 1
 
 if defined MSVC_SETUP (
   echo [build] calling %MSVC_SETUP%

@@ -4,3 +4,4 @@
 /*.exe
 *.part
 .app-update/
+app/build-config.h

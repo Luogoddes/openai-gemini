@@ -60,6 +60,45 @@ fn running_exe() -> Option<PathBuf> {
     std::env::current_exe().ok().and_then(|path| path.canonicalize().ok())
 }
 
+fn installed_list_path(cache_dir: &Path) -> PathBuf {
+    cache_dir.join("installed.json")
+}
+
+fn read_installed(cache_dir: &Path) -> Vec<String> {
+    std::fs::read_to_string(installed_list_path(cache_dir))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
+        .unwrap_or_default()
+}
+
+fn write_installed(cache_dir: &Path, files: &[String]) -> Result<(), AppError> {
+    std::fs::create_dir_all(cache_dir)?;
+    let text = serde_json::to_string_pretty(files)
+        .map_err(|e| AppError::Other(format!("文件清单序列化失败: {e}")))?;
+    std::fs::write(installed_list_path(cache_dir), text)?;
+    Ok(())
+}
+
+/// 删除"上个版本有、这个版本没有"的文件，避免升级后残留旧文件。
+fn remove_obsolete(root: &Path, previous: &[String], current: &[String]) {
+    for relative in previous {
+        if current.iter().any(|path| path == relative) {
+            continue;
+        }
+        let path = Path::new(relative);
+        let safe = !path.is_absolute()
+            && !relative.split(['/', '\\']).any(|part| part == ".." || part.is_empty());
+        if !safe {
+            continue;
+        }
+        let target = root.join(path);
+        if target.is_file() {
+            let _ = std::fs::remove_file(&target);
+            eprintln!("删除旧版本遗留文件: {}", target.display());
+        }
+    }
+}
+
 fn old_image_path(target: &Path) -> PathBuf {
     let name = target
         .file_name()
@@ -141,7 +180,9 @@ pub fn install(
     journal.save(&journal_path)?;
 
     // 第二遍：备份 + 覆盖。
+    let previous_files = read_installed(cache_dir);
     let mut produced_old_images = Vec::new();
+    let mut installed_files: Vec<String> = Vec::new();
     for plan in &plans {
         if let Some(parent) = plan.target.parent() {
             std::fs::create_dir_all(parent)?;
@@ -169,7 +210,17 @@ pub fn install(
         }
 
         std::fs::copy(&plan.source, &plan.target)?;
+        if let Ok(relative) = plan.target.strip_prefix(target_root) {
+            installed_files.push(relative.to_string_lossy().replace('\\', "/"));
+        }
     }
+
+    // 版本号文件由调用方写入，这里固定登记，避免被当成遗留文件。
+    if !installed_files.iter().any(|path| path == "version.txt") {
+        installed_files.push("version.txt".to_string());
+    }
+    remove_obsolete(target_root, &previous_files, &installed_files);
+    write_installed(cache_dir, &installed_files)?;
 
     Journal::commit(&journal_path)?;
 
@@ -207,5 +258,63 @@ pub fn cleanup(ctx: &InstallContext) {
     let _ = std::fs::remove_dir_all(&ctx.backup);
     for old in &ctx.produced_old_images {
         let _ = std::fs::remove_file(old);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("updater-install-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn removes_files_missing_from_the_new_version() {
+        let dir = temp_dir("obsolete");
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+
+        remove_obsolete(
+            &dir,
+            &["a.txt".to_string(), "b.txt".to_string()],
+            &["a.txt".to_string(), "version.txt".to_string()],
+        );
+
+        assert!(dir.join("a.txt").exists());
+        assert!(!dir.join("b.txt").exists());
+        // 不在旧清单里的文件不动（用户自己放的文件不该被删）
+        assert!(dir.join("c.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn installed_inventory_round_trips() {
+        let dir = temp_dir("inventory");
+        write_installed(&dir, &["app.exe".to_string(), "version.txt".to_string()]).unwrap();
+        assert_eq!(read_installed(&dir), vec!["app.exe", "version.txt"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inventory_ignores_unsafe_paths() {
+        let dir = temp_dir("unsafe");
+        let outside = dir.parent().unwrap().join("updater-outside.txt");
+        std::fs::write(&outside, b"x").unwrap();
+
+        remove_obsolete(
+            &dir,
+            &["../updater-outside.txt".to_string(), "keep.txt".to_string()],
+            &[],
+        );
+
+        // 越界路径必须被忽略，不能删到安装目录外面
+        assert!(outside.exists());
+        let _ = std::fs::remove_file(&outside);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

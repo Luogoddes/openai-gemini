@@ -1,7 +1,7 @@
 name: build-windows-release
 
-# 一条龙：编译 Rust 更新器 + C++ GUI 客户端 → 打包 zip → 出 SHA256 与（可选签名）feed
-# → 挂到 Release。打 v* tag 或手动触发都会跑，产物可被客户端直接消费做真实升级测试。
+# 一条龙：编译 Rust 更新器 + C++ GUI → 打包 zip → 出 SHA256 与（可选签名）feed
+# → 按 CHANGELOG 抽发布说明 → 挂到 Release。
 on:
   push:
     tags: ["v*"]
@@ -16,7 +16,7 @@ permissions:
   contents: write
 
 env:
-  # 配了 secret 就签元数据，客户端 require_signature 也会自动切成 true；没配就是未签名演示模式。
+  # 配了 secret 就签元数据；updater.conf 里的 require_signature 决定客户端是否强制验签。
   UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
 
 jobs:
@@ -62,6 +62,21 @@ jobs:
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "resolved tag: ${tag}"
 
+      # 配置是编译期固化的：先检查 require_signature 和 secret 是否自洽。
+      - name: Check signing configuration
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $requireSignature = ((Get-Content updater.conf | Where-Object { $_ -match '^require_signature=' }) -split '=')[1].Trim()
+          $hasSecret = -not [string]::IsNullOrWhiteSpace($env:UPDATE_SIGNING_KEY)
+          "require_signature=$requireSignature hasSecret=$hasSecret"
+          if ($requireSignature -eq "true" -and -not $hasSecret) {
+            throw "updater.conf 要求签名（require_signature=true），但仓库没有配置 UPDATE_SIGNING_KEY secret。"
+          }
+          if ($requireSignature -ne "true" -and $hasSecret) {
+            Write-Warning "已配置签名 secret，但 require_signature=false：会签名，但客户端不会强制验签。"
+          }
+
       - name: Build updater (Rust)
         run: cargo build --release --target x86_64-pc-windows-msvc
 
@@ -76,9 +91,8 @@ jobs:
 
           $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' |
             Select-Object -First 1).Matches[0].Groups[1].Value
-          $product = "generic-updater"
+          $product = ((Get-Content updater.conf | Where-Object { $_ -match '^product=' }) -split '=')[1].Trim()
           $zipName = "$product-$version-windows-x64-portable.zip"
-          $signed = -not [string]::IsNullOrWhiteSpace($env:UPDATE_SIGNING_KEY)
 
           $payload = "build\payload"
           New-Item -ItemType Directory -Force $payload | Out-Null
@@ -87,20 +101,25 @@ jobs:
           Set-Content -Path "$payload\version.txt" -Value $version -Encoding ascii
           Set-Content -Path "$payload\README.txt" -Value "Generic Updater Demo $version`nRun GuiUpdaterDemo.exe; generic-updater.exe must stay in the same folder." -Encoding utf8
 
-          # 打包进 zip 的 app.ini 决定客户端是否强制要求签名，必须和本次发布是否签名一致。
-          $requireSignature = if ($signed) { "true" } else { "false" }
-          (Get-Content app\app.ini -Raw) -replace '(?m)^require_signature=.*$', "require_signature=$requireSignature" |
-            Set-Content -Path "$payload\app.ini" -Encoding utf8
-
           New-Item -ItemType Directory -Force "build\out" | Out-Null
           Compress-Archive -Path "$payload\*" -DestinationPath "build\out\$zipName" -Force
 
           $size = (Get-Item "build\out\$zipName").Length
           $sha = (Get-FileHash "build\out\$zipName" -Algorithm SHA256).Hash.ToLower()
+          # GitHub 资产现在自带 digest，但 Gitee 镜像/手工下载/WinGet 清单都依赖这个旁置文件。
           Set-Content -Path "build\out\$zipName.sha256" -Value "$sha  $zipName" -Encoding ascii
 
-          # git log 在 PowerShell 里是字符串数组，先 join 再 trim，否则 notes 会变成数组。
-          $notes = ((git log -1 --pretty=%B) -join "`n").Trim()
+          # 发布说明：从 CHANGELOG.md 里抽当前版本小节，顺序固定 新增 → 修改 → 删除。
+          $changelog = Get-Content CHANGELOG.md -Raw
+          $pattern = "(?ms)^##\s+$([regex]::Escape($version))\s*\r?\n(.*?)(?=^##\s|\z)"
+          if ($changelog -match $pattern) {
+            $notes = $Matches[1].Trim()
+          } else {
+            Write-Warning "CHANGELOG.md 里没有 $version 小节，退回使用提交信息。"
+            $notes = ((git log -1 --pretty=%B) -join "`n").Trim()
+          }
+          Set-Content -Path "build\out\notes.md" -Value $notes -Encoding utf8
+
           $feed = [ordered]@{
             schema      = 1
             product     = $product
@@ -120,7 +139,6 @@ jobs:
           }
           $feed | ConvertTo-Json -Depth 6 | Set-Content -Path "build\out\latest-version-windows-x64.json" -Encoding utf8
 
-          "signed=$signed require_signature=$requireSignature"
           Get-ChildItem build\out | Select-Object Name, Length
 
       - name: Sign update metadata (RSA-PSS)
@@ -142,6 +160,7 @@ jobs:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: ${{ steps.meta.outputs.tag }}
           target_commitish: ${{ github.sha }}
+          body_path: build/out/notes.md
           files: |
             build/out/latest-version-windows-x64.json
             build/out/*.zip

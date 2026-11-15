@@ -196,11 +196,12 @@ fn download(cfg: &Config) -> Result<i32, AppError> {
     Ok(EXIT_UPDATE)
 }
 
-/// 拉起新版并确认它真的起来了：主程序启动后要写 `started.flag`，
-/// 超时或子进程提前退出都视为失败，触发回滚。
-fn probe_started(child: &mut std::process::Child, marker: &Path, timeout: Duration) -> bool {
+/// 拉起新版并确认它真的起来了：
+/// 主程序启动后会写 `started.flag`；只要进程还活着超过几秒也算启动成功，
+/// 避免标记文件因为时序问题误判，导致"重启两次"。
+fn probe_started(child: &mut std::process::Child, marker: &Path) -> bool {
     let started = Instant::now();
-    while started.elapsed() < timeout {
+    loop {
         if marker.exists() {
             return true;
         }
@@ -209,9 +210,32 @@ fn probe_started(child: &mut std::process::Child, marker: &Path, timeout: Durati
             Ok(None) => {}
             Err(_) => return false,
         }
+        if started.elapsed() > Duration::from_secs(8) {
+            return true;
+        }
         std::thread::sleep(Duration::from_millis(200));
     }
-    false
+}
+
+/// 只清下载产物，保留 state.json / installed.json，避免下次失去 24h 时间戳和文件清单。
+fn clean_downloads(cache: &Path) {
+    for name in ["staging", "backup", "started.flag", "journal.json"] {
+        let _ = std::fs::remove_dir_all(cache.join(name));
+        let _ = std::fs::remove_file(cache.join(name));
+    }
+    if let Ok(entries) = std::fs::read_dir(cache) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let extension = path
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_lowercase();
+            if extension == "zip" || extension == "part" {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
 }
 
 fn apply(cfg: &Config, parent_pid: Option<u32>, args: &[String]) -> Result<i32, AppError> {
@@ -280,9 +304,12 @@ fn apply(cfg: &Config, parent_pid: Option<u32>, args: &[String]) -> Result<i32, 
         return Err(fail(error, &version, &notes));
     }
 
-    // 启动探测：主程序起来后会写 started.flag；没写或提前退出就回滚。
-    let marker = cache.join("started.flag");
+    // 启动探测：主程序起来后会写 started.flag；没写且进程提前退出就回滚。
+    let marker = cfg.started_marker();
     let _ = std::fs::remove_file(&marker);
+    if let Some(parent) = marker.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     let mut child = match relaunch(cfg) {
         Ok(child) => child,
         Err(error) => {
@@ -291,7 +318,7 @@ fn apply(cfg: &Config, parent_pid: Option<u32>, args: &[String]) -> Result<i32, 
         }
     };
 
-    if !probe_started(&mut child, &marker, Duration::from_secs(30)) {
+    if !probe_started(&mut child, &marker) {
         let error = AppError::Install("新版启动探测失败，已回滚到旧版本".to_string());
         restore_previous(&ctx, cfg, previous_version.as_ref());
         // 旧版本已经还原，重新拉起给用户一个能用的界面。
@@ -301,9 +328,11 @@ fn apply(cfg: &Config, parent_pid: Option<u32>, args: &[String]) -> Result<i32, 
 
     let _ = std::fs::remove_file(&marker);
     install::cleanup(&ctx);
+    clean_downloads(&cache);
+    // started.flag 所在的目录如果没有别的内容，也一并清掉。
+    let marker_dir = cfg.install_dir().join(".app-update");
+    let _ = std::fs::remove_dir(&marker_dir);
 
-    // 清掉整个缓存目录，避免把上一次的下载和 staging 留在用户机器上。
-    let _ = std::fs::remove_dir_all(&cache);
     state.clear_pending();
     let _ = state.save(&state_path);
 

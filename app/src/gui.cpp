@@ -22,6 +22,19 @@
 #include <cstdint>
 #include <cstdlib>
 
+// 构建期由 tools/gen-app-config.ps1 从 updater.conf 生成，避免运行期再带 ini。
+#include "../build-config.h"
+
+#ifndef APP_HOMEPAGE
+#define APP_HOMEPAGE L"https://github.com/Luogoddes/openai-gemini"
+#endif
+#ifndef APP_EXE_NAME
+#define APP_EXE_NAME L"GuiUpdaterDemo.exe"
+#endif
+#ifndef APP_WINDOW_TITLE
+#define APP_WINDOW_TITLE L"Generic Updater Demo — 版本更新"
+#endif
+
 #ifndef WM_DPICHANGED
 #define WM_DPICHANGED 0x02E0
 #endif
@@ -33,7 +46,7 @@
 
 namespace {
 
-const wchar_t* kWindowTitle = L"Generic Updater Demo — 版本更新";
+const wchar_t* kWindowTitle = APP_WINDOW_TITLE;
 const wchar_t* kMutexName = L"Local\\GenericUpdaterDemo.SingleInstance";
 
 const int WM_APP_DONE = WM_APP + 1;
@@ -69,22 +82,9 @@ struct JobResult {
   unsigned long long size = 0;
 };
 
-struct AppConfig {
-  std::wstring repo = L"Luogoddes/openai-gemini";
-  std::wstring feedName = L"latest-version-windows-x64.json";
-  std::wstring feedUrl;
-  std::wstring exeName = L"GuiUpdaterDemo.exe";
-  std::wstring homepage = L"https://github.com/Luogoddes/openai-gemini";
-  std::wstring variant = L"portable";
-  std::wstring platform = L"windows-x64";
-  int intervalHours = 24;
-  bool requireSignature = false;
-};
-
 struct AppState {
   std::wstring baseDir;
   std::wstring updaterPath;
-  std::wstring configPath;
   std::wstring versionPath;
   std::wstring skipPath;
   std::wstring localVersion;
@@ -93,7 +93,6 @@ struct AppState {
   bool busy = false;
 };
 
-AppConfig gConfig;
 AppState gState;
 
 HWND gLocalVersion = nullptr;
@@ -238,70 +237,6 @@ unsigned long long JsonNumber(const std::string& line, const char* key) {
   return value;
 }
 
-// ---------------------------------------------------------------- 配置
-
-std::wstring IniValue(const std::wstring& text, const std::wstring& key, const std::wstring& fallback) {
-  std::wstring needle = key + L"=";
-  size_t pos = 0;
-  while (pos <= text.size()) {
-    size_t end = text.find_first_of(L"\r\n", pos);
-    std::wstring line = Trim(text.substr(pos, end == std::wstring::npos ? std::wstring::npos : end - pos));
-    if (line.compare(0, needle.size(), needle) == 0) {
-      std::wstring value = Trim(line.substr(needle.size()));
-      return value.empty() ? fallback : value;
-    }
-    if (end == std::wstring::npos) break;
-    pos = end + 1;
-  }
-  return fallback;
-}
-
-void LoadConfig() {
-  std::wstring iniPath = gState.baseDir + L"\\app.ini";
-  std::wstring text = ReadTextFile(iniPath);
-  if (text.empty()) return;
-
-  gConfig.repo = IniValue(text, L"repo", gConfig.repo);
-  gConfig.feedName = IniValue(text, L"feed_name", gConfig.feedName);
-  gConfig.feedUrl = IniValue(text, L"feed_url", L"");
-  gConfig.exeName = IniValue(text, L"exe_name", gConfig.exeName);
-  gConfig.homepage = IniValue(text, L"homepage", gConfig.homepage);
-  gConfig.variant = IniValue(text, L"variant", gConfig.variant);
-  gConfig.platform = IniValue(text, L"platform", gConfig.platform);
-  std::wstring interval = IniValue(text, L"interval_hours", L"24");
-  gConfig.intervalHours = _wtoi(interval.c_str());
-  if (gConfig.intervalHours <= 0) gConfig.intervalHours = 24;
-  gConfig.requireSignature = IniValue(text, L"require_signature", L"false") == L"true";
-}
-
-std::wstring JsonEscape(const std::wstring& text) {
-  std::wstring out;
-  for (wchar_t ch : text) {
-    if (ch == L'\\' || ch == L'"') out.push_back(L'\\');
-    out.push_back(ch);
-  }
-  return out;
-}
-
-// 把 app.ini 翻译成 Rust 更新器要的 JSON 配置（写路径，避免 GUI 侧解析 JSON）。
-bool WriteUpdaterConfig() {
-  std::wstring installDir = gState.baseDir;
-  std::wstring json = L"{\n";
-  json += L"  \"repo\": \"" + JsonEscape(gConfig.repo) + L"\",\n";
-  json += L"  \"feed_name\": \"" + JsonEscape(gConfig.feedName) + L"\",\n";
-  if (!gConfig.feedUrl.empty()) {
-    json += L"  \"feed_url\": \"" + JsonEscape(gConfig.feedUrl) + L"\",\n";
-  }
-  json += L"  \"version_file\": \"" + JsonEscape(gState.versionPath) + L"\",\n";
-  json += L"  \"install_dir\": \"" + JsonEscape(installDir) + L"\",\n";
-  json += L"  \"exe_name\": \"" + JsonEscape(gConfig.exeName) + L"\",\n";
-  json += L"  \"variant\": \"" + JsonEscape(gConfig.variant) + L"\",\n";
-  json += L"  \"platform\": \"" + JsonEscape(gConfig.platform) + L"\",\n";
-  json += L"  \"require_signature\": " + std::wstring(gConfig.requireSignature ? L"true" : L"false") + L",\n";
-  json += L"  \"automatic_check_interval_hours\": " + std::to_wstring(gConfig.intervalHours) + L"\n";
-  json += L"}\n";
-  return WriteTextFile(gState.configPath, json);
-}
 
 // ---------------------------------------------------------------- 进程调用
 
@@ -400,7 +335,7 @@ DWORD RunUpdaterCapture(const std::wstring& arguments, CaptureContext* context) 
 bool SpawnApply() {
   wchar_t pidText[32];
   swprintf(pidText, 32, L"%lu", (unsigned long)GetCurrentProcessId());
-  std::wstring args = L"--apply --parent-pid " + std::wstring(pidText) + L" " + Quote(gState.configPath);
+  std::wstring args = L"--apply --parent-pid " + std::wstring(pidText);
   std::wstring commandLine = Quote(gState.updaterPath) + L" " + args;
 
   STARTUPINFOW startup = {};
@@ -421,11 +356,11 @@ DWORD WINAPI JobThread(LPVOID parameter) {
 
   std::wstring arguments;
   if (mode == JOB_CHECK_AUTO) {
-    arguments = L"--check --auto " + Quote(gState.configPath);
+    arguments = L"--check --auto";
   } else if (mode == JOB_CHECK_MANUAL) {
-    arguments = L"--check " + Quote(gState.configPath);
+    arguments = L"--check";
   } else {
-    arguments = L"--download " + Quote(gState.configPath);
+    arguments = L"--download";
   }
 
   CaptureContext context;
@@ -673,7 +608,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
       } else if (id == IDC_SKIP) {
         SkipCurrentVersion(window);
       } else if (id == IDC_HOMEPAGE) {
-        ShellExecuteW(nullptr, L"open", gConfig.homepage.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        ShellExecuteW(nullptr, L"open", APP_HOMEPAGE, nullptr, nullptr, SW_SHOWNORMAL);
       }
       return 0;
     }
@@ -731,7 +666,7 @@ void SignalStarted() {
 void RunRecovery() {
   CaptureContext context;
   context.hwnd = nullptr;
-  RunUpdaterCapture(L"--recover " + Quote(gState.configPath), &context);
+  RunUpdaterCapture(L"--recover", &context);
 }
 
 }  // namespace
@@ -759,16 +694,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 
   gState.baseDir = DirectoryOf(ExecutablePath());
   gState.updaterPath = gState.baseDir + L"\\generic-updater.exe";
-  gState.configPath = gState.baseDir + L"\\updater.json";
   gState.versionPath = gState.baseDir + L"\\version.txt";
   gState.skipPath = gState.baseDir + L"\\skipped-version.txt";
 
-  LoadConfig();
-  if (!WriteUpdaterConfig()) {
-    MessageBoxW(nullptr, L"无法写入 updater.json，请检查目录权限。", L"Generic Updater Demo",
-                MB_OK | MB_ICONERROR);
-    return 1;
-  }
 
   INITCOMMONCONTROLSEX controls = {};
   controls.dwSize = sizeof(controls);
@@ -809,3 +737,5 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
   if (mutex) CloseHandle(mutex);
   return (int)message.wParam;
 }
+
+

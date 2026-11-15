@@ -33,11 +33,18 @@ impl UpdateState {
 
     pub fn save(&self, path: &Path) -> Result<(), AppError> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                AppError::Config(format!(
+                    "创建状态目录 {} 失败: {e}",
+                    parent.display()
+                ))
+            })?;
         }
         let text = serde_json::to_string_pretty(self)
             .map_err(|e| AppError::Other(format!("状态序列化失败: {e}")))?;
-        std::fs::write(path, text)?;
+        std::fs::write(path, text).map_err(|e| {
+            AppError::Config(format!("写状态文件 {} 失败: {e}", path.display()))
+        })?;
         Ok(())
     }
 

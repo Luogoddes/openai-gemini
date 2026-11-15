@@ -14,7 +14,7 @@ use std::env;
 use update::Mode;
 
 const USAGE: &str = "\
-用法: generic-updater <模式> <config.json> [选项]
+用法: generic-updater <模式> [config.json] [选项]
 
 模式:
   --check [--auto]   检查更新；--auto 时受 automatic_check_interval_hours 约束
@@ -25,8 +25,10 @@ const USAGE: &str = "\
 
 选项:
   --parent-pid <pid> 主程序 PID，安装前精确等待它退出
-  -c, --config <path> 配置文件路径
+  -c, --config <path> 调试用：用 JSON 配置覆盖编译期内置配置
   --elevated         内部参数：本进程由 UAC 提权拉起
+
+不带 config.json 时使用编译进二进制的 updater.conf 配置。
 ";
 
 fn main() {
@@ -78,20 +80,22 @@ fn main() {
         }
     };
 
-    let config_path = match config_path {
-        Some(path) => path,
-        None => {
-            eprintln!("缺少配置文件路径\n\n{USAGE}");
-            std::process::exit(1);
-        }
-    };
-
-    let cfg = match config::Config::load(&config_path) {
-        Ok(cfg) => cfg,
-        Err(error) => {
-            eprintln!("{error}");
-            std::process::exit(1);
-        }
+    let config_path = config_path.or_else(|| std::env::var("UPDATER_CONFIG").ok());
+    let cfg = match config_path {
+        Some(path) => match config::Config::load(&path) {
+            Ok(cfg) => cfg,
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        },
+        None => match config::Config::embedded() {
+            Ok(cfg) => cfg,
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        },
     };
 
     match update::run(&cfg, mode, &args) {

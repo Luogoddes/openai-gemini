@@ -12,7 +12,7 @@ use rsa::{BigUint, RsaPublicKey};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-/// 编译期嵌入的可信公钥；发布前用 `tools/new-release-key.ps1` 生成并替换。
+/// 编译期嵌入的可信公钥；发布前用 `scripts/new-release-key.ps1` 生成并替换。
 const TRUSTED_KEYS: &str = include_str!("../resources/update-trusted-keys.json");
 const MODULUS_BYTES: usize = 384; // 3072-bit
 const SALT_LEN: usize = 32;

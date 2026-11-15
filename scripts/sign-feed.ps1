@@ -11,7 +11,7 @@
     * 输出紧凑 JSON：{"schema":1,"keyId":"...","payload":"base64","signature":"base64"}。
 
 .EXAMPLE
-  powershell -File tools/sign-feed.ps1 `
+  powershell -File scripts/sign-feed.ps1 `
     -FeedPath build/out/latest-version-windows-x64.json `
     -PrivateKeyPath D:\keys\update-signing.pem `
     -PublicKeysPath resources/update-trusted-keys.json
@@ -28,7 +28,7 @@ $ErrorActionPreference = 'Stop'
 
 # .NET Framework (Windows PowerShell 5.1) 没有 ImportFromPem / PSS 支持，签名统一在 PS7 下做。
 if ($PSVersionTable.PSVersion.Major -lt 7) {
-    throw 'sign-feed.ps1 需要 PowerShell 7（pwsh）。CI 用的是 pwsh；本地可用 `pwsh -File tools/sign-feed.ps1 ...`。'
+    throw 'sign-feed.ps1 需要 PowerShell 7（pwsh）。CI 用的是 pwsh；本地可用 `pwsh -File scripts/sign-feed.ps1 ...`。'
 }
 $FeedPath = [IO.Path]::GetFullPath($FeedPath)
 $PrivateKeyPath = [IO.Path]::GetFullPath($PrivateKeyPath)

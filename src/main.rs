@@ -7,12 +7,14 @@ mod error;
 mod feed;
 mod install;
 mod journal;
+mod lock;
 mod platform;
 mod protocol;
 mod state;
 mod update;
 
 use std::env;
+use std::path::PathBuf;
 use update::Mode;
 
 const USAGE: &str = "\
@@ -25,22 +27,29 @@ const USAGE: &str = "\
   --recover          只做事务恢复（上次安装中途崩溃时按备份回滚）
   --clean            清掉下载缓存与暂存目录
   --skip <version>   记住「跳过这个版本」，存在缓存目录的 state.json 里
+  --unskip           取消跳过，让该版本重新提示
   --verify-feed <json> 本地校验发布 feed 的签名，打印 keyId 与版本
 
 选项:
   --parent-pid <pid> 主程序 PID，安装前精确等待它退出
   -c, --config <path> 调试用：用 JSON 配置覆盖编译期内置配置
+  --cache <abs-dir>  指定缓存目录（必须绝对路径；提权重启时会自动带上）
   --elevated         内部参数：本进程由 UAC 提权拉起
 
 不带 config.json 时使用编译进二进制的 updater.conf 配置。
 ";
 
 fn main() {
+    std::process::exit(run());
+}
+
+fn run() -> i32 {
     let args: Vec<String> = env::args().skip(1).collect();
 
     let automatic = args.iter().any(|arg| arg == "--auto");
     let mut config_path: Option<String> = None;
     let mut parent_pid: Option<u32> = None;
+    let mut cache_override: Option<String> = None;
     let mut mode: Option<Mode> = None;
     let mut unknown: Option<String> = None;
     let mut verify_feed: Option<String> = None;
@@ -66,10 +75,15 @@ fn main() {
                     mode = Some(Mode::SkipVersion { version: version.clone() });
                 }
             }
+            "--unskip" => mode = Some(Mode::UnskipVersion),
             "--elevated" => {}
             "--parent-pid" => {
                 i += 1;
                 parent_pid = args.get(i).and_then(|value| value.parse().ok());
+            }
+            "--cache" => {
+                i += 1;
+                cache_override = args.get(i).cloned();
             }
             "--config" | "-c" => {
                 i += 1;
@@ -83,17 +97,17 @@ fn main() {
 
     if let Some(value) = unknown {
         eprintln!("未知参数: {value}\n\n{USAGE}");
-        std::process::exit(1);
+        return 1;
     }
 
     if let Some(path) = verify_feed {
-        match update::verify_feed(&path) {
-            Ok(code) => std::process::exit(code),
+        return match update::verify_feed(&path) {
+            Ok(code) => code,
             Err(error) => {
                 eprintln!("{error}");
-                std::process::exit(1);
+                1
             }
-        }
+        };
     }
 
     let mode = match mode {
@@ -101,34 +115,55 @@ fn main() {
         Some(mode) => mode,
         None => {
             eprintln!("{USAGE}");
-            std::process::exit(1);
+            return 1;
         }
     };
 
     let config_path = config_path.or_else(|| std::env::var("UPDATER_CONFIG").ok());
-    let cfg = match config_path {
+    let mut cfg = match config_path {
         Some(path) => match config::Config::load(&path) {
             Ok(cfg) => cfg,
             Err(error) => {
                 eprintln!("{error}");
-                std::process::exit(1);
+                return 1;
             }
         },
         None => match config::Config::embedded() {
             Ok(cfg) => cfg,
             Err(error) => {
                 eprintln!("{error}");
-                std::process::exit(1);
+                return 1;
             }
         },
     };
 
-    match update::run(&cfg, mode, &args) {
-        Ok(code) => std::process::exit(code),
+    if let Some(cache) = cache_override {
+        let path = PathBuf::from(cache);
+        if !path.is_absolute() {
+            eprintln!("--cache 必须是绝对路径: {}", path.display());
+            return 1;
+        }
+        cfg.cache_override = Some(path);
+    }
+
+    // 检查/下载/安装/恢复都可能改同一份缓存与安装目录，跨进程只能有一个在跑。
+    let lock = match lock::Lock::acquire(&cfg.cache_dir()) {
+        Ok(lock) => lock,
         Err(error) => {
             eprintln!("{error}");
-            std::process::exit(1);
+            return 1;
         }
-    }
-}
+    };
 
+    let code = match update::run(&cfg, mode, &args) {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("{error}");
+            1
+        }
+    };
+
+    // 显式 drop，保证 `process::exit` 之前把锁文件删掉。
+    drop(lock);
+    code
+}

@@ -254,6 +254,7 @@ mod tests {
             state_file: None,
             require_signature: false,
             expected_product: None,
+            cache_override: None,
         }
     }
 
@@ -308,10 +309,10 @@ mod tests {
         let feed = parse(&FEED.replace("\"1.2.0\"", "\"v1.2.0\""), &cfg()).unwrap();
         assert_eq!(feed.version.to_string(), "1.2.0");
 
-        let base = Base::Local(PathBuf::from("demo/feed"));
+        let base = Base::Local(PathBuf::from("examples/demo/feed"));
         assert_eq!(
             PathBuf::from(base.join("portable")),
-            PathBuf::from("demo/feed").join("portable")
+            PathBuf::from("examples/demo/feed").join("portable")
         );
         let remote = Base::Remote("https://example.test/releases/download/v1".to_string());
         assert_eq!(

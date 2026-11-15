@@ -27,12 +27,16 @@ pub enum Mode {
     Recover,
     /// 记录"用户跳过了这个版本"。
     SkipVersion { version: String },
+    /// 取消跳过，让提示恢复。
+    UnskipVersion,
 }
 
 fn build_client() -> Result<reqwest::blocking::Client, AppError> {
     reqwest::blocking::Client::builder()
-        .user_agent("generic-updater/0.4")
-        .timeout(Duration::from_secs(300))
+        .user_agent("generic-updater/0.5")
+        // 连接单独限时，整体超时只兜住异常卡死，不限制正常的大包下载。
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(30 * 60))
         .build()
         .map_err(|e| AppError::Network(e.to_string()))
 }
@@ -59,6 +63,7 @@ pub fn run(cfg: &Config, mode: Mode, args: &[String]) -> Result<i32, AppError> {
         Mode::Clean => clean(cfg),
         Mode::Recover => recover(cfg),
         Mode::SkipVersion { version } => skip_version(cfg, &version),
+        Mode::UnskipVersion => unskip_version(cfg),
     }
 }
 
@@ -67,6 +72,16 @@ fn skip_version(cfg: &Config, version: &str) -> Result<i32, AppError> {
     let state_path = cfg.state_path();
     let mut state = UpdateState::load(&state_path);
     state.skipped_version = Some(version.trim().to_string());
+    state.save(&state_path)?;
+    emit(State::Idle, "", "", 0, 0, None, false);
+    Ok(EXIT_NO_UPDATE)
+}
+
+/// 取消跳过：清掉 skipped_version，下次检查重新提示。
+fn unskip_version(cfg: &Config) -> Result<i32, AppError> {
+    let state_path = cfg.state_path();
+    let mut state = UpdateState::load(&state_path);
+    state.skipped_version = None;
     state.save(&state_path)?;
     emit(State::Idle, "", "", 0, 0, None, false);
     Ok(EXIT_NO_UPDATE)
@@ -105,7 +120,8 @@ pub fn verify_feed(path: &str) -> Result<i32, AppError> {
     Ok(EXIT_NO_UPDATE)
 }
 
-fn recover(cfg: &Config) -> Result<i32, AppError> {    match journal::recover(&cfg.cache_dir(), &cfg.install_dir())? {
+fn recover(cfg: &Config) -> Result<i32, AppError> {
+    match journal::recover(&cfg.cache_dir(), &cfg.install_dir())? {
         journal::Recovery::RolledBack(count) => {
             eprintln!("检测到上次中断的安装，已回滚 {count} 个文件");
             emit(State::Idle, "", "", 0, 0, None, false);
@@ -284,7 +300,7 @@ fn probe_started(child: &mut std::process::Child) -> bool {
     matches!(child.try_wait(), Ok(None))
 }
 
-/// 只清下载产物，保留 state.json / installed.json，避免下次失去 24h 时间戳和文件清单。
+/// 只清下载产物，保留 state.json，避免下次失去 24h 时间戳和跳过记录。
 fn clean_downloads(cache: &Path) {
     for name in ["staging", "backup", "started.flag", "journal.json"] {
         let _ = std::fs::remove_dir_all(cache.join(name));
@@ -305,24 +321,47 @@ fn clean_downloads(cache: &Path) {
     }
 }
 
+/// apply 的失败出口：先保证文件树回到旧版本，再拉起旧程序。
+///
+/// 进入 apply 时主程序已经退出，如果这里直接返回错误，用户会看到一个"消失"的软件，
+/// 所以 install 失败、提权被拒、pending 丢失等所有失败都必须先恢复旧版本。
+fn abort_apply(cfg: &Config, cache: &Path, error: AppError, version: &str, notes: &str) -> AppError {
+    if let Err(rollback_error) = journal::recover(cache, &cfg.install_dir()) {
+        // 恢复失败时保留 journal 与备份，下次启动继续尝试。
+        eprintln!("回滚失败，已保留备份与 journal，下次启动会继续恢复: {rollback_error}");
+    }
+    if let Err(relaunch_error) = relaunch(cfg) {
+        eprintln!("拉起旧版本失败: {relaunch_error}");
+    }
+    fail(error, version, notes)
+}
+
 fn apply(cfg: &Config, parent_pid: Option<u32>, args: &[String]) -> Result<i32, AppError> {
     let cache = cfg.cache_dir();
-    // 上次安装若中途崩溃，先按 journal 回滚。
-    journal::recover(&cache, &cfg.install_dir())?;
 
     let state_path = cfg.state_path();
     let mut state = UpdateState::load(&state_path);
+
+    let version = state.pending_version.clone().unwrap_or_default();
+    let notes = state.pending_notes.clone().unwrap_or_default();
+
+    // 上次安装若中途崩溃，先按 journal 回滚；回滚失败也要尽量把旧程序拉起来。
+    if let Err(error) = journal::recover(&cache, &cfg.install_dir()) {
+        return Err(abort_apply(cfg, &cache, error, &version, &notes));
+    }
 
     let staging = state
         .pending_staging
         .clone()
         .map(PathBuf::from)
-        .filter(|path| path.exists())
-        .ok_or_else(|| AppError::Install("没有待安装的更新，请先下载".to_string()))?;
+        .filter(|path| path.exists());
 
-    let version = state.pending_version.clone().unwrap_or_default();
-    let notes = state.pending_notes.clone().unwrap_or_default();
-
+    let Some(staging) = staging else {
+        let error = AppError::Install("没有待安装的更新，请先下载".to_string());
+        // 主程序已经退出，必须把它拉起来，不能留下一个空界面。
+        let _ = relaunch(cfg);
+        return Err(fail(error, &version, &notes));
+    };
 
     emit(State::Applying, &version, &notes, 0, 0, None, false);
 
@@ -338,7 +377,7 @@ fn apply(cfg: &Config, parent_pid: Option<u32>, args: &[String]) -> Result<i32, 
                 "安装目录仍不可写: {}",
                 cfg.install_dir().display()
             ));
-            return Err(fail(error, &version, &notes));
+            return Err(abort_apply(cfg, &cache, error, &version, &notes));
         }
         let executable = std::env::current_exe()
             .map_err(|e| AppError::Other(format!("取自身路径失败: {e}")))?;
@@ -346,12 +385,17 @@ fn apply(cfg: &Config, parent_pid: Option<u32>, args: &[String]) -> Result<i32, 
         if !elevated_args.iter().any(|arg| arg == "--elevated") {
             elevated_args.push("--elevated".to_string());
         }
+        // 提权后账户可能不同，LOCALAPPDATA 会变，必须把当前缓存目录显式传过去。
+        if !elevated_args.iter().any(|arg| arg == "--cache") {
+            elevated_args.push("--cache".to_string());
+            elevated_args.push(cache.to_string_lossy().to_string());
+        }
         if platform::relaunch_elevated(&executable, &elevated_args) {
             eprintln!("安装目录不可写，已请求 UAC 提权后重试");
             return Ok(EXIT_UPDATE);
         }
         let error = AppError::Install("安装目录不可写，且提权请求被拒绝".to_string());
-        return Err(fail(error, &version, &notes));
+        return Err(abort_apply(cfg, &cache, error, &version, &notes));
     }
 
     let install_dir = cfg.install_dir();
@@ -360,27 +404,30 @@ fn apply(cfg: &Config, parent_pid: Option<u32>, args: &[String]) -> Result<i32, 
         install::install(&staging, &install_dir, &backup, &cache, &version)
     }) {
         Ok(ctx) => ctx,
-        Err(error) => return Err(fail(error, &version, &notes)),
+        Err(error) => return Err(abort_apply(cfg, &cache, error, &version, &notes)),
     };
 
     // 启动探测：拉起后 3 秒内进程退出就回滚。
     let mut child = match relaunch(cfg) {
         Ok(child) => child,
         Err(error) => {
-            restore_previous(&ctx, cfg);
+            restore_previous(&ctx);
+            // 旧版本已经还原，重新拉起给用户一个能用的界面。
+            let _ = relaunch(cfg);
             return Err(fail(error, &version, &notes));
         }
     };
 
     if !probe_started(&mut child) {
         let error = AppError::Install("新版启动探测失败，已回滚到旧版本".to_string());
-        restore_previous(&ctx, cfg);
+        restore_previous(&ctx);
         // 旧版本已经还原，重新拉起给用户一个能用的界面。
         let _ = relaunch(cfg);
         return Err(fail(error, &version, &notes));
     }
 
     install::cleanup(&ctx);
+    // journal 已提交，事务完成；剩下的下载产物一并清掉。
     clean_downloads(&cache);
     // 0.5.2 及更早版本会在安装目录留下 .app-update，升级后顺手清掉。
     let legacy_dir = cfg.install_dir().join(".app-update");
@@ -393,12 +440,18 @@ fn apply(cfg: &Config, parent_pid: Option<u32>, args: &[String]) -> Result<i32, 
     Ok(EXIT_UPDATE)
 }
 
-fn restore_previous(ctx: &InstallContext, cfg: &Config) {
-    // version.txt 也是被覆盖的普通文件，回滚时会从备份里还原，不用单独处理。
-    let _ = install::rollback(ctx);
-    install::cleanup(ctx);
-    // 回滚完成后 journal 就没用了，删掉免得下次启动又回滚一遍。
-    let _ = std::fs::remove_file(journal::Journal::path(&cfg.cache_dir()));
+/// 回滚一次安装。成功才清理备份与 journal；失败保留现场，交给下次启动的 recover。
+fn restore_previous(ctx: &InstallContext) {
+    match install::rollback(ctx) {
+        Ok(count) => {
+            eprintln!("安装失败，已回滚 {count} 个文件");
+            install::cleanup(ctx);
+            let _ = std::fs::remove_file(&ctx.journal_path);
+        }
+        Err(error) => {
+            eprintln!("回滚失败，已保留备份与 journal，下次启动会继续恢复: {error}");
+        }
+    }
 }
 
 fn clean(cfg: &Config) -> Result<i32, AppError> {
@@ -441,4 +494,3 @@ fn relaunch(cfg: &Config) -> Result<std::process::Child, AppError> {
         .spawn()
         .map_err(|e| AppError::Install(format!("拉起新版失败: {e}")))
 }
-

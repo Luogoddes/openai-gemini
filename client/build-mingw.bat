@@ -8,12 +8,12 @@ set ROOT=%~dp0..
 cd /d "%ROOT%"
 if not exist "dist" mkdir "dist"
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\tools\gen-app-config.ps1" -ConfPath "%ROOT%\updater.conf" -OutPath "%ROOT%\app\build-config.h"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\gen-app-config.ps1" -ConfPath "%ROOT%\updater.conf" -OutPath "%ROOT%\client\build-config.h"
 if errorlevel 1 exit /b 1
 
 g++ -O2 -std=c++17 -municode -mwindows -DUNICODE -D_UNICODE ^
   -o dist\GuiUpdaterDemo.exe ^
-  app\src\gui.cpp ^
+  client\src\gui.cpp ^
   -lcomctl32 -lshell32 -luser32 -lgdi32
 if errorlevel 1 exit /b 1
 echo [build] ok: %ROOT%\dist\GuiUpdaterDemo.exe

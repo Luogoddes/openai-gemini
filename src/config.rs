@@ -57,6 +57,10 @@ pub struct Config {
     /// 期望的 product（编译期内置时自动填），用于拒绝拿到别的产品的包
     #[serde(default)]
     pub expected_product: Option<String>,
+    /// 只由命令行 `--cache` 注入，不从 JSON 读取。
+    /// UAC 换账户后 `LOCALAPPDATA` 会变，必须把原缓存目录显式带过去。
+    #[serde(skip)]
+    pub cache_override: Option<PathBuf>,
 }
 
 impl Config {
@@ -89,6 +93,7 @@ impl Config {
             state_file: None,
             require_signature: REQUIRE_SIGNATURE,
             expected_product: Some(PRODUCT.to_string()),
+            cache_override: None,
         })
     }
 
@@ -112,6 +117,10 @@ impl Config {
     /// 下载缓存、暂存、备份、state 都放在系统缓存目录，安装目录里不留垃圾。
     /// 如果系统缓存目录不可写（受限账户、受控文件夹、沙箱），退回安装目录下的隐藏目录。
     pub fn cache_dir(&self) -> PathBuf {
+        // 命令行显式指定优先：提权重启后账户可能不同，只有它能把原缓存带过去。
+        if let Some(dir) = &self.cache_override {
+            return dir.clone();
+        }
         if let Some(dir) = std::env::var_os("UPDATER_CACHE_DIR") {
             if !dir.is_empty() {
                 return PathBuf::from(dir);
@@ -156,15 +165,29 @@ impl Config {
 
 
 
-    /// 读取本地已安装版本；文件不存在时按 0.0.0 处理（首次安装场景）。
+    /// 读取本地已安装版本。
+    ///
+    /// 文件不存在时按 0.0.0 处理（首次安装场景）。内容无法解析时也按 0.0.0 处理并打日志：
+    /// 直接返回错误会让每次检查都永久失败，用户再也没有机会通过更新修好这个文件。
     pub fn local_version(&self) -> Result<semver::Version, AppError> {
         let raw = std::fs::read_to_string(self.version_file_path()).unwrap_or_default();
         let trimmed = raw.trim().trim_start_matches('v').to_string();
         if trimmed.is_empty() {
             return Ok(semver::Version::new(0, 0, 0));
         }
-        semver::Version::parse(&trimmed)
-            .map_err(|e| AppError::Config(format!("本地版本号无法解析 `{trimmed}`: {e}")))
+        if let Ok(version) = semver::Version::parse(&trimmed) {
+            return Ok(version);
+        }
+        // 容忍 "1.2.3 (build 5)" 这类带后缀的写法，取开头的数字段。
+        let head: String = trimmed
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit() || *ch == '.')
+            .collect();
+        if let Ok(version) = semver::Version::parse(&head) {
+            return Ok(version);
+        }
+        eprintln!("本地版本号无法解析 `{trimmed}`，按 0.0.0 处理（下次更新会重写 version.txt）");
+        Ok(semver::Version::new(0, 0, 0))
     }
 
 

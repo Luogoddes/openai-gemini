@@ -103,8 +103,18 @@ fn emit_full(
     };
     // 帧序列化失败不应中断更新；降级为纯文本行。
     match serde_json::to_string(&ev) {
-        Ok(line) => println!("{line}"),
-        Err(_) => println!("{} {version}", state.as_str()),
+        Ok(line) => write_line(&line),
+        Err(_) => write_line(&format!("{} {version}", state.as_str())),
     }
-    let _ = io::stdout().flush();
+}
+
+/// 写一行并 flush。
+///
+/// 调用方（GUI / 主程序）可能提前关闭管道，这时 `println!` 会 panic，
+/// 而 release 是 `panic = "abort"`，会把整个更新流程打断；这里忽略写入错误。
+fn write_line(line: &str) {
+    let mut stdout = io::stdout().lock();
+    let _ = stdout.write_all(line.as_bytes());
+    let _ = stdout.write_all(b"\n");
+    let _ = stdout.flush();
 }

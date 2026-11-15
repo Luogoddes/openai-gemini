@@ -18,6 +18,7 @@ mod win {
         pub fn CloseHandle(handle: Handle) -> i32;
         pub fn GetCurrentProcess() -> Handle;
         pub fn OpenProcessToken(process: Handle, access: u32, token: *mut Handle) -> i32;
+        pub fn GetLastError() -> u32;
     }
 
     #[link(name = "advapi32")]
@@ -47,6 +48,8 @@ mod win {
     pub const TOKEN_QUERY: u32 = 0x0008;
     pub const TOKEN_ELEVATION: u32 = 20;
     pub const SW_SHOWNORMAL: i32 = 1;
+    pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    pub const ERROR_INVALID_PARAMETER: u32 = 87;
 }
 
 /// 阻塞等待 `pid` 退出，最多 `timeout`；拿不到句柄（进程已退出/无权限）时立刻返回。
@@ -68,6 +71,28 @@ pub fn wait_for_process(pid: u32, timeout: Duration) {
 
 #[cfg(not(windows))]
 pub fn wait_for_process(_pid: u32, _timeout: Duration) {}
+
+/// `pid` 对应的进程是否还活着。用于判断跨进程锁是否陈旧。
+#[cfg(windows)]
+pub fn process_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    unsafe {
+        let handle = win::OpenProcess(win::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if !handle.is_null() {
+            win::CloseHandle(handle);
+            return true;
+        }
+        // 打不开不一定是不存在：权限不足时按"还活着"处理，宁可不抢锁。
+        win::GetLastError() != win::ERROR_INVALID_PARAMETER
+    }
+}
+
+#[cfg(not(windows))]
+pub fn process_alive(pid: u32) -> bool {
+    pid != 0 && Path::new(&format!("/proc/{pid}")).exists()
+}
 
 /// 当前进程是否已经提权。
 #[cfg(windows)]
@@ -96,6 +121,38 @@ pub fn is_elevated() -> bool {
     true
 }
 
+/// 按 Windows 命令行规则给单个参数加引号，避免带空格的路径被拆成两个参数。
+#[cfg(windows)]
+fn quote_argument(argument: &str) -> String {
+    if !argument.is_empty() && !argument.contains([' ', '\t', '"']) {
+        return argument.to_string();
+    }
+    let mut quoted = String::with_capacity(argument.len() + 2);
+    quoted.push('"');
+    let mut backslashes = 0usize;
+    for ch in argument.chars() {
+        match ch {
+            '\\' => {
+                backslashes += 1;
+                quoted.push('\\');
+            }
+            '"' => {
+                quoted.push_str(&"\\".repeat(backslashes + 1));
+                quoted.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                quoted.push(ch);
+                backslashes = 0;
+            }
+        }
+    }
+    // 结尾的反斜杠会被用来转义右引号，必须加倍。
+    quoted.push_str(&"\\".repeat(backslashes));
+    quoted.push('"');
+    quoted
+}
+
 /// 用 UAC 提权重启自己（同一个 exe + 同样的参数）。
 #[cfg(windows)]
 pub fn relaunch_elevated(executable: &Path, arguments: &[String]) -> bool {
@@ -111,7 +168,12 @@ pub fn relaunch_elevated(executable: &Path, arguments: &[String]) -> bool {
         .chain(std::iter::once(0))
         .collect();
     let operation = wide("runas");
-    let parameters = wide(&arguments.join(" "));
+    let joined = arguments
+        .iter()
+        .map(|argument| quote_argument(argument))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let parameters = wide(&joined);
     let directory = executable
         .parent()
         .map(|path| {

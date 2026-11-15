@@ -52,8 +52,13 @@ impl UpdateState {
         }
         let text = serde_json::to_string_pretty(self)
             .map_err(|e| AppError::Other(format!("状态序列化失败: {e}")))?;
-        std::fs::write(path, text).map_err(|e| {
-            AppError::Config(format!("写状态文件 {} 失败: {e}", path.display()))
+        // 先写临时文件再改名：中途断电不会留下半个 JSON，跳过记录/待安装版本不会凭空丢失。
+        let temporary = path.with_extension("json.tmp");
+        std::fs::write(&temporary, text).map_err(|e| {
+            AppError::Config(format!("写状态文件 {} 失败: {e}", temporary.display()))
+        })?;
+        std::fs::rename(&temporary, path).map_err(|e| {
+            AppError::Config(format!("替换状态文件 {} 失败: {e}", path.display()))
         })?;
         Ok(())
     }

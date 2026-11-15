@@ -11,13 +11,13 @@
 
 ```powershell
 # 在源仓库里执行：把更新模块生成到目标项目
-powershell -ExecutionPolicy Bypass -File tools\scaffold-update.ps1 `
+powershell -ExecutionPolicy Bypass -File scripts\scaffold-update.ps1 `
   -TargetDir D:\code\my-app -Repo "me/my-app" -ExeName "MyApp.exe" -Product "my-app"
 
 # 目标项目里验证
 cd D:\code\my-app
 cargo build --release
-app\build-msvc.bat
+client\build-msvc.bat
 
 # 发版
 git tag v0.1.0; git push origin v0.1.0

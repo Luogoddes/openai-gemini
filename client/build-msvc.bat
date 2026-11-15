@@ -7,7 +7,7 @@ setlocal
 set ROOT=%~dp0..
 if not exist "%ROOT%\dist" mkdir "%ROOT%\dist"
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\tools\gen-app-config.ps1" -ConfPath "%ROOT%\updater.conf" -OutPath "%ROOT%\app\build-config.h"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\gen-app-config.ps1" -ConfPath "%ROOT%\updater.conf" -OutPath "%ROOT%\client\build-config.h"
 if errorlevel 1 exit /b 1
 
 if defined MSVC_SETUP (
@@ -16,7 +16,7 @@ if defined MSVC_SETUP (
 )
 
 cl /nologo /O2 /EHsc /utf-8 /W3 /DUNICODE /D_UNICODE ^
-  "%ROOT%\app\src\gui.cpp" ^
+  "%ROOT%\client\src\gui.cpp" ^
   /Fo:"%ROOT%\dist\\" /Fe:"%ROOT%\dist\GuiUpdaterDemo.exe" ^
   /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib comctl32.lib shell32.lib
 if errorlevel 1 exit /b 1

@@ -22,13 +22,13 @@ description: 给 Windows 桌面项目接入本仓库的自动更新能力（签�
 1. **生成模块**（在源仓库执行）：
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File tools/scaffold-update.ps1 `
+   powershell -ExecutionPolicy Bypass -File scripts/scaffold-update.ps1 `
      -TargetDir <目标目录> -Repo "<owner/repo>" -ExeName "<MyApp.exe>" -Product "<my-app>"
    ```
 
 2. **验证编译**：
    - `cargo build --release`
-   - `set MSVC_SETUP=<msvc setup_x64.bat>` 后 `app\build-msvc.bat`
+   - `set MSVC_SETUP=<msvc setup_x64.bat>` 后 `client\build-msvc.bat`
 
 3. **改 `updater.conf`**：repo / exe_name / product / homepage / window_title /
    interval_hours / startup_check_delay_seconds。
@@ -42,7 +42,7 @@ description: 给 Windows 桌面项目接入本仓库的自动更新能力（签�
    产出：`latest-version-<platform>.json`、`<product>-<version>-<platform>-portable.zip`、`.zip.sha256`。
 
 6. **签名（可选）**：
-   `tools/new-release-key.ps1`（PS 5.1 可用）生成密钥 → 私钥整段放进 Secret
+   `scripts/new-release-key.ps1`（PS 5.1 可用）生成密钥 → 私钥整段放进 Secret
    `UPDATE_SIGNING_KEY` → 提交公钥 → `require_signature=true` → 打新 tag。
    发布后可用 `generic-updater.exe --verify-feed <json>` 自查。
 
@@ -53,7 +53,9 @@ description: 给 Windows 桌面项目接入本仓库的自动更新能力（签�
 
 - `exe_name` 必须是**被更新的程序**；更新器不能覆盖正在运行的自己（已用改名绕过）。
 - **版本只由 tag 决定**，不用改 `Cargo.toml` 的 version。
-- 手动 Run workflow 会用 Cargo 版本号当 tag，容易撞号；正式发版用 tag 触发。
+- 发版只走 tag：`git tag vX.Y.Z && git push origin vX.Y.Z`，CI 自动出包。
+- 手动 Run workflow 会拿 `Cargo.toml` 的 version 当 tag；不改版本号就会和上一次撞同一个号
+  （`v0.5.5`、`v0.5.8` 都是这么来的）。
 - 私钥永远不要提交；公钥提交后必须重新构建客户端才生效。
 - `require_signature=true` 时 CI 必须有 secret，否则构建失败（有意为之）。
 - 配置是编译期的：改了 `updater.conf` 必须重新构建并重新发版。

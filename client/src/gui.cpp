@@ -7,9 +7,9 @@
 //     exe 释放后完成替换并重新拉起新版本（浏览器版做不到这一点，所以改用原生窗口）。
 //
 // 编译（MSVC）：
-//   cl /nologo /O2 /EHsc /utf-8 /W4 app\src\gui.cpp /Fe:GuiUpdaterDemo.exe ^
+//   cl /nologo /O2 /EHsc /utf-8 /W4 client\src\gui.cpp /Fe:GuiUpdaterDemo.exe ^
 //      /link user32.lib gdi32.lib comctl32.lib shell32.lib /SUBSYSTEM:WINDOWS
-// 编译（MinGW）：g++ -O2 -municode -mwindows -o GuiUpdaterDemo.exe app\src\gui.cpp -lcomctl32 -lshell32
+// 编译（MinGW）：g++ -O2 -municode -mwindows -o GuiUpdaterDemo.exe client\src\gui.cpp -lcomctl32 -lshell32
 
 #define WIN32_LEAN_AND_MEAN
 #define _CRT_SECURE_NO_WARNINGS
@@ -22,7 +22,7 @@
 #include <cstdint>
 #include <cstdlib>
 
-// 构建期由 tools/gen-app-config.ps1 从 updater.conf 生成，避免运行期再带 ini。
+// 构建期由 scripts/gen-app-config.ps1 从 updater.conf 生成，避免运行期再带 ini。
 #include "../build-config.h"
 
 #ifndef APP_HOMEPAGE
@@ -92,6 +92,7 @@ struct AppState {
   std::wstring localVersion;
   std::wstring availableVersion;
   std::wstring pendingVersion;
+  bool skipped = false;
   bool busy = false;
 };
 
@@ -368,7 +369,6 @@ DWORD WINAPI JobThread(LPVOID parameter) {
   }
 
   CaptureContext context;
-  context.hwnd = gCheck;  // 沿用主窗口句柄
   HWND window = GetParent(gCheck);
   context.hwnd = window;
   RunUpdaterCapture(arguments, &context);
@@ -482,12 +482,16 @@ void OnJobDone(HWND window, JobResult* result) {
     SetWindowTextW(gPackageSize, FormatBytes(result->size).c_str());
     if (result->skipped) {
       // 用户之前点过"跳过"，但依然要显示"有更新"，只是不让他直接安装。
+      gState.skipped = true;
+      SetWindowTextW(gSkip, L"取消跳过");
       SetWindowTextW(gUpdateHint, L"（有更新 · 已跳过）");
       EnableWindow(gInstall, FALSE);
-      SetStatus(L"版本 " + result->version + L" 已被跳过，可点「跳过此版本」恢复提示");
+      SetStatus(L"版本 " + result->version + L" 已被跳过，点「取消跳过」恢复提示");
       delete result;
       return;
     }
+    gState.skipped = false;
+    SetWindowTextW(gSkip, L"跳过此版本");
     SetWindowTextW(gUpdateHint, L"（有更新）");
     EnableWindow(gInstall, TRUE);
     SetStatus(L"发现新版本 " + result->version);
@@ -495,6 +499,10 @@ void OnJobDone(HWND window, JobResult* result) {
     return;
   }
   if (result->state == L"Idle") {
+    gState.skipped = false;
+    gState.availableVersion.clear();
+    SetWindowTextW(gSkip, L"跳过此版本");
+    EnableWindow(gSkip, FALSE);
     SetWindowTextW(gUpdateHint, L"（已是最新）");
     if (!result->version.empty()) {
       SetWindowTextW(gLatestVersion, result->version.c_str());
@@ -582,15 +590,24 @@ void LoadLocalVersion() {
   SetWindowTextW(gLocalVersion, text.c_str());
 }
 
-// 跳过状态不落文件：交给更新器的 --skip 写进它的 state.json。
-void SkipCurrentVersion() {
+// 跳过状态不落文件：交给更新器的 --skip / --unskip 写进它的 state.json。
+void ToggleSkipCurrentVersion() {
   if (gState.availableVersion.empty()) return;
   CaptureContext context;
   context.hwnd = nullptr;
-  RunUpdaterCapture(L"--skip " + gState.availableVersion, &context);
-  SetWindowTextW(gUpdateHint, L"（已跳过此版本）");
-  EnableWindow(gInstall, FALSE);
-  SetStatus(L"已跳过版本 " + gState.availableVersion);
+  if (gState.skipped) {
+    RunUpdaterCapture(L"--unskip", &context);
+    gState.skipped = false;
+    SetWindowTextW(gSkip, L"跳过此版本");
+    SetStatus(L"已恢复版本 " + gState.availableVersion + L" 的更新提示");
+  } else {
+    RunUpdaterCapture(L"--skip " + gState.availableVersion, &context);
+    gState.skipped = true;
+    SetWindowTextW(gSkip, L"取消跳过");
+    SetStatus(L"已跳过版本 " + gState.availableVersion);
+  }
+  // 重新检查一次，让按钮/提示与更新器里的状态保持一致。
+  BeginJob(JOB_CHECK_MANUAL, L"正在检查更新…");
 }
 
 // 更新完成后，旧镜像 `*.old-*` 可能还被执行中的更新器占用；这里在后台重试删除，
@@ -639,7 +656,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
       } else if (id == IDC_RESTART) {
         BeginApply(window);
       } else if (id == IDC_SKIP) {
-        SkipCurrentVersion();
+        ToggleSkipCurrentVersion();
       } else if (id == IDC_HOMEPAGE) {
         ShellExecuteW(nullptr, L"open", APP_HOMEPAGE, nullptr, nullptr, SW_SHOWNORMAL);
       }

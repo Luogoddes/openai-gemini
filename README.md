@@ -15,13 +15,13 @@ RSA-PSS 元数据验签 / 备份替换 / 断电恢复 / UAC 提权 / 重启拉�
 | [docs/01-更新功能说明.md](docs/01-更新功能说明.md) | 架构、协议、检查机制、事务安装、签名、边界 |
 | [docs/02-接入指南.md](docs/02-接入指南.md) | 一键脚手架、接入已有项目、发布/签名/排错清单 |
 | [docs/03-设计决策记录.md](docs/03-设计决策记录.md) | 版本演进、关键取舍、踩坑记录、验证结果 |
-| `tools/scaffold-update.ps1` | 一条命令把更新模块（含文档）生成到新项目 |
+| [scripts/scaffold-update.ps1](scripts/scaffold-update.ps1) | 一条命令把更新模块（含文档）生成到新项目 |
 | [docs/skill/update-feature/SKILL.md](docs/skill/update-feature/SKILL.md) | 给 Agent 用的技能说明（可放进 DSH skills 目录） |
 
 新项目接入（在源仓库里执行）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools\scaffold-update.ps1 `
+powershell -ExecutionPolicy Bypass -File scripts\scaffold-update.ps1 `
   -TargetDir D:\code\my-app -Repo "me/my-app" -ExeName "MyApp.exe" -Product "my-app"
 ```
 ## 1. 组成
@@ -29,9 +29,11 @@ powershell -ExecutionPolicy Bypass -File tools\scaffold-update.ps1 `
 | 目录 | 作用 |
 |---|---|
 | `src/` | Rust 更新器：检查、验签、下载、校验、事务安装、回滚、提权、拉起、探测 |
-| `app/` | C++ Win32 GUI：版本弹窗 + 进度条 + 立即安装 / 跳过此版本 / 重启软件 |
-| `demo/` | 纯前端测试台，不开编译器也能点一遍 |
-| `tools/` | 密钥生成、元数据签名、GUI 配置头生成 |
+| `client/` | C++ Win32 GUI：版本弹窗 + 进度条 + 立即安装 / 跳过此版本 / 重启软件 |
+| `examples/demo/` | 纯前端测试台，不开编译器也能点一遍 |
+| `scripts/` | 密钥生成、元数据签名、GUI 配置头生成、脚手架 |
+| `resources/` | 发布用资源（可信公钥表） |
+| `docs/` | 功能说明、接入指南、设计决策；`docs/reviews/` 是历史审查归档 |
 | `updater.conf` | **唯一的发布配置**，构建时分别编译进 Rust 与 C++ |
 | `CHANGELOG.md` | 发布说明来源，CI 按版本号抽取 |
 | `.github/workflows/build.yml` | 编译 → 打包 → 校验文件 → feed（可选签名）→ Release |
@@ -51,11 +53,11 @@ interval_hours=24
 startup_check_delay_seconds=30
 product=generic-updater
 window_title=Generic Updater Demo — 版本更新
-require_signature=false
+require_signature=true
 ```
 
 - Rust 侧：`build.rs` 在编译时读它，生成常量编进 `generic-updater.exe`；
-- C++ 侧：`tools/gen-app-config.ps1` 生成 `app/build-config.h`，编进 `GuiUpdaterDemo.exe`；
+- C++ 侧：`scripts/gen-app-config.ps1` 生成 `client/build-config.h`，编进 `GuiUpdaterDemo.exe`；
 - 发布包里没有 ini/json，用户改不了也丢不了；本地调试可用 `--config xxx.json` 或
   `UPDATER_CONFIG` 环境变量覆盖。
 
@@ -82,9 +84,10 @@ require_signature=false
 
 - 缓存根目录：`%LOCALAPPDATA%\GenericUpdater\updates\<安装目录哈希>\`，**不在安装目录**；
   系统缓存不可写（受限账户/沙箱）时退回 `<install_dir>\.app-update` 并打日志。
-- 下载的 zip、解压 staging、备份 backup 都在这下面；安装成功后只保留 `state.json`（24h 时间戳）
-  和 `installed.json`（文件清单），其余全删。
-- 失败一律回滚：exe、版本号、新增文件都还原，zip 留着方便重试，用户不会看到半成品。
+- 下载的 zip、解压 staging、备份 backup 都在这下面；安装成功后只保留 `state.json`（24h 时间戳
+  与跳过记录），文件清单是安装目录里的隐藏文件 `.update-files.json`，其余全删。
+- 失败一律回滚：exe、版本号、新增文件、被删掉的旧文件都还原，zip 留着方便重试，
+  用户不会看到半成品。
 
 ## 6. 安装事务、进程协调与权限
 
@@ -92,12 +95,13 @@ require_signature=false
 |---|---|
 | 24h 自动检查 | 时间戳存缓存目录的 `state.json`，检查失败不刷新 |
 | 等待旧进程 | `OpenProcess + WaitForSingleObject`，拿不到句柄视为已退出；另有占用重试兜底 |
-| 断电恢复 | 覆盖前写 `journal.json`，装完标 `committed`；启动时 `--recover` 还原未提交事务 |
-| 失败回滚 | 备份目录 + 回滚 + 启动探测失败回滚（进程提前退出，或 8 秒内没起来） |
-| 旧文件清理 | 记录安装清单，升级时删掉"上个版本有、这个版本没有"的文件 |
-| UAC 提权 | 安装目录不可写且未提权时，`ShellExecuteW("runas")` 重启自身（带 `--elevated`） |
+| 断电恢复 | 覆盖前写 `journal.json`（先写临时文件再改名），装完标 `committed`；启动时 `--recover` 先回滚再清理 |
+| 失败回滚 | journal 驱动回滚：备份文件、新增文件、被删文件全部还原；回滚失败保留备份等下次恢复 |
+| 启动探测 | 拉起后 3 秒内进程存活即算成功；提前退出则回滚并重新拉起旧版 |
+| 旧文件清理 | 记录安装清单，升级时把"上个版本有、这个版本没有"的文件移进备份区（回滚可还原） |
+| UAC 提权 | 安装目录不可写且未提权时，`ShellExecuteW("runas")` 重启自身（带 `--elevated --cache <缓存目录>`） |
 | 自更新 | 运行中的 updater 先改名成 `*.old-<pid>` 再写新文件，下次启动清理 |
-| 单实例 | GUI 用互斥体，并带重试，避免重启瞬间误判 |
+| 单实例 | 缓存目录 `updater.lock` 跨进程互斥（10 秒等待，陈旧锁自动接管）；GUI 另外用互斥体 |
 
 ## 7. 命令行
 
@@ -108,8 +112,11 @@ generic-updater.exe --download              # 下载 + 验签 + 校验 + 解压�
 generic-updater.exe --apply --parent-pid 1234
 generic-updater.exe --recover               # 事务恢复
 generic-updater.exe --clean                 # 清缓存
+generic-updater.exe --skip 0.5.0            # 跳过这个版本
+generic-updater.exe --unskip                # 取消跳过
 generic-updater.exe --verify-feed latest-version-windows-x64.json   # 本地校验签名
 generic-updater.exe --check -c test.json    # 调试：覆盖内置配置
+generic-updater.exe --apply --cache D:\cache\update   # 显式指定缓存目录（提权重启会自动带上）
 ```
 
 退出码：`0` 无更新 / `2` 有更新·已就绪·更新成功 / `1` 失败。
@@ -141,13 +148,13 @@ CI 每次都从同一个 secret 读私钥、用同一把公钥对应的 keyId �
 
 ```powershell
 # 1) 生成密钥：私钥必须放仓库外，公钥写进仓库
-powershell -File tools/new-release-key.ps1 `
+powershell -File scripts/new-release-key.ps1 `
   -PrivateKeyPath D:\keys\update-signing.pem `
   -PublicKeysPath resources/update-trusted-keys.json `
   -KeyId generic-updater-2026-01
 ```
 
-> 密钥生成脚本兼容 Windows PowerShell 5.1；`tools/sign-feed.ps1` 需要 PowerShell 7（CI 用的就是 `pwsh`）。
+> 密钥生成脚本兼容 Windows PowerShell 5.1；`scripts/sign-feed.ps1` 需要 PowerShell 7（CI 用的就是 `pwsh`）。
 > 本地只生成密钥的话，`powershell` 就够。
 
 2. 打开私钥文件，把**整段 PEM**（含 `-----BEGIN RSA PRIVATE KEY-----`）复制出来；
@@ -188,15 +195,16 @@ stdout 一行一条 JSON：
 ```powershell
 cargo build --release                 # target\release\generic-updater.exe
 set MSVC_SETUP=E:\打包\NuitkaGUI\msvc\setup_x64.bat
-app\build-msvc.bat                    # dist\GuiUpdaterDemo.exe
-cargo test                            # 15 个单测（含签名、journal、文件清单）
+client\build-msvc.bat                 # dist\GuiUpdaterDemo.exe
+cargo test                            # 单测：签名契约、journal 回滚、安装事务、下载、锁
 ```
 
 ## 12. 已知边界
 
-- **不支持增量**：每次整包下载。
+- **不支持增量**：每次整包下载；断点续传只针对同一个包的下载中断。
 - **没有 Authenticode 证书**：SmartScreen 仍提示未知发布者；元数据签名不等于代码签名。
-- **断电恢复依赖 journal 落盘**：极端情况（journal 写一半断电）仍需 `--clean`。
+- **断电恢复依赖 journal 落盘**：journal 已改为临时文件 + 改名，极端情况下仍是"最后一份完整
+  journal"生效；若备份本身损坏可以用 `--clean` 重来。
 - **平台**：Windows x64 已实测；其他平台只有裸编译路径。
 
 

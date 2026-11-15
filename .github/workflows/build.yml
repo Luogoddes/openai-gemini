@@ -28,15 +28,51 @@ jobs:
         with:
           fetch-depth: 0
 
+      # platform / variant / product / feed 名都从 updater.conf 派生，
+      # 脚手架换了平台也不会和 CI 里写死的名字对不上。
+      - name: Read updater.conf
+        id: conf
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $values = @{}
+          foreach ($line in Get-Content updater.conf -Encoding utf8) {
+            $trimmed = $line.Trim()
+            if (-not $trimmed -or $trimmed.StartsWith('#') -or $trimmed.StartsWith('[')) { continue }
+            $index = $trimmed.IndexOf('=')
+            if ($index -lt 0) { continue }
+            $values[$trimmed.Substring(0, $index).Trim()] = $trimmed.Substring($index + 1).Trim()
+          }
+          $platform = $values['platform']; if (-not $platform) { $platform = 'windows-x64' }
+          $variant = $values['variant']; if (-not $variant) { $variant = 'portable' }
+          $product = $values['product']; if (-not $product) { $product = 'app' }
+          $exeName = $values['exe_name']; if (-not $exeName) { $exeName = 'app.exe' }
+          $feedName = $values['feed_name']; if (-not $feedName) { $feedName = "latest-version-$platform.json" }
+          $targets = @{
+            'windows-x64'   = @('x86_64-pc-windows-msvc', 'x64')
+            'windows-arm64' = @('aarch64-pc-windows-msvc', 'arm64')
+          }
+          if (-not $targets.ContainsKey($platform)) {
+            throw "updater.conf 的 platform=$platform 不受 build.yml 支持（可选：$($targets.Keys -join ', ')）"
+          }
+          "platform=$platform" >> $env:GITHUB_OUTPUT
+          "variant=$variant" >> $env:GITHUB_OUTPUT
+          "product=$product" >> $env:GITHUB_OUTPUT
+          "exe_name=$exeName" >> $env:GITHUB_OUTPUT
+          "feed_name=$feedName" >> $env:GITHUB_OUTPUT
+          "triple=$($targets[$platform][0])" >> $env:GITHUB_OUTPUT
+          "arch=$($targets[$platform][1])" >> $env:GITHUB_OUTPUT
+          "platform/variant/product: $platform / $variant / $product"
+
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: x64
+          arch: ${{ steps.conf.outputs.arch }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ steps.conf.outputs.triple }}
 
       - name: Resolve release tag
         id: meta
@@ -82,36 +118,45 @@ jobs:
           if ($hasSecret) {
             $keys = @((Get-Content resources/update-trusted-keys.json -Raw | ConvertFrom-Json).keys)
             if ($keys.Count -eq 0) {
-              throw "已配置 UPDATE_SIGNING_KEY，但 resources/update-trusted-keys.json 里没有公钥。先运行 tools/new-release-key.ps1 并提交公钥文件。"
+              throw "已配置 UPDATE_SIGNING_KEY，但 resources/update-trusted-keys.json 里没有公钥。先运行 scripts/new-release-key.ps1 并提交公钥文件。"
             }
           }
 
       - name: Build updater (Rust)
-        run: cargo build --release --target x86_64-pc-windows-msvc
+        run: cargo build --release --target ${{ steps.conf.outputs.triple }}
 
       - name: Build GUI client (C++)
         shell: cmd
         env:
           RELEASE_VERSION: ${{ steps.meta.outputs.version }}
-        run: app\build-msvc.bat
+        run: client\build-msvc.bat
 
       - name: Package portable zip and metadata
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ steps.meta.outputs.version }}
+          PLATFORM: ${{ steps.conf.outputs.platform }}
+          VARIANT: ${{ steps.conf.outputs.variant }}
+          PRODUCT: ${{ steps.conf.outputs.product }}
+          EXE_NAME: ${{ steps.conf.outputs.exe_name }}
+          FEED_NAME: ${{ steps.conf.outputs.feed_name }}
+          TARGET_TRIPLE: ${{ steps.conf.outputs.triple }}
         run: |
           $ErrorActionPreference = "Stop"
 
           # 版本以 tag 为准，不再依赖 Cargo.toml：打 v0.5.1 就发 0.5.1。
           $version = $env:RELEASE_VERSION
           if ([string]::IsNullOrWhiteSpace($version)) { throw "没有解析到发布版本号" }
-          $product = ((Get-Content updater.conf | Where-Object { $_ -match '^product=' }) -split '=')[1].Trim()
-          $zipName = "$product-$version-windows-x64-portable.zip"
+          $product = $env:PRODUCT
+          $zipName = "$product-$version-$env:PLATFORM-$env:VARIANT.zip"
 
           $payload = "build\payload"
           New-Item -ItemType Directory -Force $payload | Out-Null
-          Copy-Item "dist\GuiUpdaterDemo.exe" "$payload\GuiUpdaterDemo.exe"
-          Copy-Item "target\x86_64-pc-windows-msvc\release\generic-updater.exe" "$payload\generic-updater.exe"
+          # 本仓库的示例客户端固定叫 GuiUpdaterDemo.exe；脚手架换了 exe_name 时按配置改名。
+          $guiExe = "dist\GuiUpdaterDemo.exe"
+          if (-not (Test-Path $guiExe)) { throw "没有找到 $guiExe，先确认 client\build-msvc.bat 构建成功" }
+          Copy-Item $guiExe "$payload\$($env:EXE_NAME)"
+          Copy-Item "target\$($env:TARGET_TRIPLE)\release\generic-updater.exe" "$payload\generic-updater.exe"
           Set-Content -Path "$payload\version.txt" -Value $version -Encoding ascii
 
           New-Item -ItemType Directory -Force "build\out" | Out-Null
@@ -138,31 +183,33 @@ jobs:
             product     = $product
             version     = $version
             publishedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-            platform    = "windows-x64"
+            platform    = $env:PLATFORM
             notes       = $notes
             packages    = @(
               [ordered]@{
-                variant = "portable"
-                kind    = "portable"
+                variant = $env:VARIANT
+                kind    = $env:VARIANT
                 path    = $zipName
                 size    = $size
                 sha256  = $sha
               }
             )
           }
-          $feed | ConvertTo-Json -Depth 6 | Set-Content -Path "build\out\latest-version-windows-x64.json" -Encoding utf8
+          $feed | ConvertTo-Json -Depth 6 | Set-Content -Path "build\out\$($env:FEED_NAME)" -Encoding utf8
 
           Get-ChildItem build\out | Select-Object Name, Length
 
       - name: Sign update metadata (RSA-PSS)
         if: ${{ env.UPDATE_SIGNING_KEY != '' }}
         shell: pwsh
+        env:
+          FEED_NAME: ${{ steps.conf.outputs.feed_name }}
         run: |
           $ErrorActionPreference = "Stop"
           $keyPath = Join-Path $env:RUNNER_TEMP "update-signing.pem"
           [IO.File]::WriteAllText($keyPath, $env:UPDATE_SIGNING_KEY, [Text.UTF8Encoding]::new($false))
-          ./tools/sign-feed.ps1 `
-            -FeedPath build/out/latest-version-windows-x64.json `
+          ./scripts/sign-feed.ps1 `
+            -FeedPath "build/out/$($env:FEED_NAME)" `
             -PrivateKeyPath $keyPath `
             -PublicKeysPath resources/update-trusted-keys.json
           Remove-Item $keyPath -Force
@@ -175,7 +222,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           body_path: build/out/notes.md
           files: |
-            build/out/latest-version-windows-x64.json
+            build/out/${{ steps.conf.outputs.feed_name }}
             build/out/*.zip
             build/out/*.sha256
           fail_on_unmatched_files: true

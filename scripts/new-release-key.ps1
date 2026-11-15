@@ -6,11 +6,11 @@
 .DESCRIPTION
   Works on Windows PowerShell 5.1 as well as PowerShell 7:
   .NET Framework has no ExportPkcs8PrivateKeyPem, so the PKCS#1 PEM is encoded here
-  by hand from RSAParameters. The signing script (tools/sign-feed.ps1) imports it
+  by hand from RSAParameters. The signing script (scripts/sign-feed.ps1) imports it
   via ImportFromPem, which accepts both PKCS#1 and PKCS#8 PEM.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File tools/new-release-key.ps1 `
+  powershell -ExecutionPolicy Bypass -File scripts/new-release-key.ps1 `
     -PrivateKeyPath D:\keys\update-signing.pem `
     -PublicKeysPath resources/update-trusted-keys.json `
     -KeyId generic-updater-2026-01

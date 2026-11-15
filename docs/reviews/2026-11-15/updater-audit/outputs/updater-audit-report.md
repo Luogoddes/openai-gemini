@@ -58,11 +58,11 @@ openai-gemini/
 │   ├── state.rs               # state.json（24h 时间戳、跳过版本、pending）
 │   ├── config.rs              # 配置 + 缓存目录解析
 │   └── error.rs               # AppError + is_transient
-├── app/                       # C++ Win32 GUI 客户端（gui.cpp 约 770 行）
+├── client/                       # C++ Win32 GUI 客户端（gui.cpp 约 770 行）
 ├── resources/update-trusted-keys.json   # 编译进二进制的可信公钥
-├── tools/                     # 密钥生成、feed 签名、配置头生成、脚手架
+├── scripts/                     # 密钥生成、feed 签名、配置头生成、脚手架
 ├── .github/workflows/build.yml# tag → 编译 → 打包 → 哈希 → feed → 签名 → Release
-├── demo/                      # 浏览器端交互测试台（含本地静态服务器）
+├── examples/demo/                      # 浏览器端交互测试台（含本地静态服务器）
 └── docs/                      # 01 功能说明 / 02 接入指南 / 03 决策记录 / skill
 ```
 
@@ -233,7 +233,7 @@ journal::recover(cache_dir, install_dir)      journal.rs L96
 
 #### BUG-03 `--apply` 失败后应用不会回来
 
-- 位置：[gui.cpp L426-L435](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L426-L435)（`SpawnApply()` 成功后立刻 `DestroyWindow`）；[update.rs L359-L373](file:///e:/code/脚手架/openai-gemini/src/update.rs#L359-L373)（安装失败直接 `return Err`，不重启）；只有探测失败分支会 `relaunch`（[update.rs L375-L381](file:///e:/code/脚手架/openai-gemini/src/update.rs#L375-L381)）。
+- 位置：[gui.cpp L426-L435](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L426-L435)（`SpawnApply()` 成功后立刻 `DestroyWindow`）；[update.rs L359-L373](file:///e:/code/脚手架/openai-gemini/src/update.rs#L359-L373)（安装失败直接 `return Err`，不重启）；只有探测失败分支会 `relaunch`（[update.rs L375-L381](file:///e:/code/脚手架/openai-gemini/src/update.rs#L375-L381)）。
 - 触发条件（任一）：
   - 安装阶段报错（文件被占用超过 90s、磁盘满、清单写入失败、包内缺少主 exe）；
   - 目录不可写且用户拒绝 UAC / 提权进程用不同管理员账户启动；
@@ -270,11 +270,11 @@ journal::recover(cache_dir, install_dir)      journal.rs L96
 
 #### BUG-06 更新器没有任何跨进程互斥
 
-- 位置：全仓库无锁文件/命名互斥体（`src/` 内检索 `lock|create_new` 无结果，见 `work/证据索引.md`）；GUI 的互斥体是 `Local\GenericUpdaterDemo.SingleInstance`（[gui.cpp L50](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L50)），只覆盖**同一登录会话内**的 GUI。
+- 位置：全仓库无锁文件/命名互斥体（`src/` 内检索 `lock|create_new` 无结果，见 `work/证据索引.md`）；GUI 的互斥体是 `Local\GenericUpdaterDemo.SingleInstance`（[gui.cpp L50](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L50)），只覆盖**同一登录会话内**的 GUI。
 - 触发条件（任一即可）：
   - 同一用户通过两个 RDP/会话各开一个 GUI，先后点"重启软件" → 两个 `--apply` 并发；
   - 命令行/脚本直接调用 `--download`/`--apply` 与 GUI 并发；
-  - `--skip` 与 `--apply` 并发（`SkipCurrentVersion` 就在 UI 线程同步跑，不置 busy，[gui.cpp L586-L594](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L586-L594)）。
+  - `--skip` 与 `--apply` 并发（`SkipCurrentVersion` 就在 UI 线程同步跑，不置 busy，[gui.cpp L586-L594](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L586-L594)）。
 - 实际后果：
   - 两个 `--apply` 同时备份/覆盖 → journal 互相覆盖、备份被对方改写、最终回滚数据错乱；
   - 两个 `--download` 同时写同一个 `.part` → 内容交错，双方都哈希失败；
@@ -285,14 +285,14 @@ journal::recover(cache_dir, install_dir)      journal.rs L96
 
 #### BUG-07 `--skip` 无法取消，GUI 提示语是错的
 
-- 位置：[update.rs L66-L73](file:///e:/code/脚手架/openai-gemini/src/update.rs#L66-L73)（只会 `skipped_version = Some(version)`）；[gui.cpp L483-L490](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L483-L490)（提示"可点「跳过此版本」恢复提示"）。
+- 位置：[update.rs L66-L73](file:///e:/code/脚手架/openai-gemini/src/update.rs#L66-L73)（只会 `skipped_version = Some(version)`）；[gui.cpp L483-L490](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L483-L490)（提示"可点「跳过此版本」恢复提示"）。
 - 触发条件：用户跳过某版本后想恢复。
 - 实际后果：再点一次"跳过此版本"仍然是 `--skip <同一版本>`，状态不变；界面上没有任何"取消跳过"的路径。提示语与行为矛盾。
 - 建议：增加 `--unskip`（或 `--skip ""` 清空），GUI 在 skipped 状态下把按钮文案改成"取消跳过"。
 
 #### BUG-08 脚手架 / CI / 客户端三处 platform 与 feed 名不一致
 
-- 位置：[tools/scaffold-update.ps1 L77](file:///e:/code/脚手架/openai-gemini/tools/scaffold-update.ps1#L77)（`feed_name=latest-version-$Platform.json`）；[build.yml L109](file:///e:/code/脚手架/openai-gemini/.github/workflows/build.yml#L109)（zip 名硬编码 `windows-x64`）；[build.yml L136-L153](file:///e:/code/脚手架/openai-gemini/.github/workflows/build.yml#L136-L153)（feed 文件名、`platform`、`variant` 全部硬编码）。
+- 位置：[scripts/scaffold-update.ps1 L77](file:///e:/code/脚手架/openai-gemini/scripts/scaffold-update.ps1#L77)（`feed_name=latest-version-$Platform.json`）；[build.yml L109](file:///e:/code/脚手架/openai-gemini/.github/workflows/build.yml#L109)（zip 名硬编码 `windows-x64`）；[build.yml L136-L153](file:///e:/code/脚手架/openai-gemini/.github/workflows/build.yml#L136-L153)（feed 文件名、`platform`、`variant` 全部硬编码）。
 - 触发条件：`scaffold-update.ps1 -Platform windows-arm64`（文档宣称支持多平台，见 `docs/01` 第 3 节）。
 - 实际后果：目标项目客户端去找 `latest-version-windows-arm64.json`，CI 永远只产出 `latest-version-windows-x64.json` → **更新永久失败**（"Release 中找不到元数据资产"）。
 - 另外：`updater.conf` 的 `feed_name` 若被改成别的名字，CI 也不会跟随。
@@ -321,17 +321,17 @@ journal::recover(cache_dir, install_dir)      journal.rs L96
 
 #### BUG-12 本地版本比远端新时，界面"最新版本"显示更旧的号
 
-- 位置：[update.rs L150-L152](file:///e:/code/脚手架/openai-gemini/src/update.rs#L150-L152)（`emit(Idle, &version, …)` 里 `version` 是**远端**版本）；[gui.cpp L497-L503](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L497-L503)（`if (!result->version.empty()) SetWindowTextW(gLatestVersion, result->version)`）。
+- 位置：[update.rs L150-L152](file:///e:/code/脚手架/openai-gemini/src/update.rs#L150-L152)（`emit(Idle, &version, …)` 里 `version` 是**远端**版本）；[gui.cpp L497-L503](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L497-L503)（`if (!result->version.empty()) SetWindowTextW(gLatestVersion, result->version)`）。
 - 触发条件：用户手动装了比 Release 更新的构建（或 Release 回滚/热修了旧版本号），本地 `version.txt` > feed.version。
 - 实际后果：界面显示"当前已是最新版本"，但"最新版本"一栏是比"软件版本"更低的号（如本地 0.5.9、最新版本显示 0.5.8），用户会认为更新坏了。
 - 建议：`Idle` 帧带 `version` 时客户端取 `max(local, remote)` 显示，或 Idle 时显式回传本地版本。
 
 #### BUG-13 检查失败但没发终态帧时，界面永久停在"正在检查更新…"
 
-- 位置：[gui.cpp L437-L511](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L437-L511)（只处理 `Failed`/`Available`/`Idle`/`Ready`，没有 else）；[update.rs L130-L141](file:///e:/code/脚手架/openai-gemini/src/update.rs#L130-L141)（`emit(Checking)` 之后的 `state.save()?` 等失败会直接 `return Err`，不发 `Failed`）。
+- 位置：[gui.cpp L437-L511](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L437-L511)（只处理 `Failed`/`Available`/`Idle`/`Ready`，没有 else）；[update.rs L130-L141](file:///e:/code/脚手架/openai-gemini/src/update.rs#L130-L141)（`emit(Checking)` 之后的 `state.save()?` 等失败会直接 `return Err`，不发 `Failed`）。
 - 触发条件：缓存目录突然不可写（磁盘满、安全软件锁目录、权限被改）等发生在 `emit(Checking)` 之后的错误；或 updater 因 panic 中止。
 - 实际后果：按钮恢复可用，但状态栏永远停在"正在检查更新…"，用户不知道发生了什么。
-- 相关：`result->state.empty()` 时提示"无法启动更新器 generic-updater.exe"（[gui.cpp L442-L447](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L442-L447)），但"进程起来了、只是没输出帧"也会走到这里，提示误导。
+- 相关：`result->state.empty()` 时提示"无法启动更新器 generic-updater.exe"（[gui.cpp L442-L447](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L442-L447)），但"进程起来了、只是没输出帧"也会走到这里，提示误导。
 - 建议：`OnJobDone` 增加"非终态 → 视为失败"的兜底；GUI 同时用退出码（非 0/2）判断失败。
 
 #### BUG-14 `state.json` 非原子写，崩溃会丢 pending
@@ -343,9 +343,9 @@ journal::recover(cache_dir, install_dir)      journal.rs L96
 
 #### BUG-15 已下载待安装的状态无法跨进程恢复
 
-- 位置：GUI 只把 pending 放在内存 `gState.pendingVersion`（[gui.cpp L94](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L94)、[L466](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L466)），从不读取 updater 的 `state.json`；Rust 侧 `--check` 也不会报告"有一个已就绪的 pending"。
+- 位置：GUI 只把 pending 放在内存 `gState.pendingVersion`（[gui.cpp L94](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L94)、[L466](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L466)），从不读取 updater 的 `state.json`；Rust 侧 `--check` 也不会报告"有一个已就绪的 pending"。
 - 触发条件：下载完成（Ready）后用户关闭窗口，或下载完成前 GUI 崩溃 / 被结束。
-- 实际后果：重新打开后界面显示"立即安装"，点一下又重新下载（有缓存时很快，但用户看到的是"上次白下了"）；如果 GUI 在 `StartInstall` 里已经 `pendingVersion.clear()`（[gui.cpp L422](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L422)）而下载失败，则彻底失去待安装状态。
+- 实际后果：重新打开后界面显示"立即安装"，点一下又重新下载（有缓存时很快，但用户看到的是"上次白下了"）；如果 GUI 在 `StartInstall` 里已经 `pendingVersion.clear()`（[gui.cpp L422](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L422)）而下载失败，则彻底失去待安装状态。
 - 建议：updater 增加 `--status`（输出 pending/ready/version/last_check），GUI 启动时先查一次；`Available` 帧带 `pending:true`。
 
 ### P2
@@ -392,14 +392,14 @@ journal::recover(cache_dir, install_dir)      journal.rs L96
 
 #### BUG-22 GUI 的 `Available`/`Idle` 分支按钮可见性不完整
 
-- 位置：[gui.cpp L478-L509](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L478-L509)。
+- 位置：[gui.cpp L478-L509](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L478-L509)。
 - 触发条件：先到 Ready（`gInstall` 被隐藏、`gRestart` 显示），再点"检查更新"得到 Available 或 Idle。
 - 后果：两个按钮占同一位置（470,424），可能出现重叠或"有更新但看不到立即安装"。`Idle` 分支也不隐藏 `gRestart`。
 - 建议：进入检查结果时统一重置两个按钮的可见性。
 
 #### BUG-23 下载中关窗口会 abort 更新器（详见 BUG-24 的根因）
 
-- 位置：[gui.cpp L672-L675](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L672-L675)（`WM_CLOSE` 直接销毁窗口，不检查是否 busy）；根因见 BUG-24。
+- 位置：[gui.cpp L672-L675](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L672-L675)（`WM_CLOSE` 直接销毁窗口，不检查是否 busy）；根因见 BUG-24。
 - 后果：用户以为"取消"，实际 updater 会在下一次 `emit` 时 abort，留下 `.part`；如果发生在 `--apply` 阶段，可能停在"安装完成但未清理"。
 - 建议：busy 时拦截关闭（提示"更新正在进行"），或让 updater 在 stdout 断开时优雅降级为"继续完成当前阶段"。
 
@@ -421,7 +421,7 @@ journal::recover(cache_dir, install_dir)      journal.rs L96
 | [README.md L96](file:///e:/code/脚手架/openai-gemini/README.md#L96) | "8 秒内没起来"算失败 | 实际 3 秒（[update.rs L283](file:///e:/code/脚手架/openai-gemini/src/update.rs#L283)） |
 | [README.md L140](file:///e:/code/脚手架/openai-gemini/README.md#L140) | "没配 secret 的时候 feed 就是明文 JSON——这是默认状态" | `require_signature=true` 且 CI 在缺 secret 时直接失败（[build.yml L71-L87](file:///e:/code/脚手架/openai-gemini/.github/workflows/build.yml#L71-L87)），不会产出明文 feed |
 | [config.example.json L4](file:///e:/code/脚手架/openai-gemini/config.example.json#L4) | 调试配置 `require_signature=false` | 合理，但与 README 混用会让人以为生产默认不验签 |
-| [app/build-config.h L8](file:///e:/code/脚手架/openai-gemini/app/build-config.h#L8) | 构建版本 0.5.5 | 项目已到 0.5.9（该文件被 `.gitignore` 且构建时重生成，但本地已有 `dist/GuiUpdaterDemo.exe` 是 0.5.5） |
+| [client/build-config.h L8](file:///e:/code/脚手架/openai-gemini/client/build-config.h#L8) | 构建版本 0.5.5 | 项目已到 0.5.9（该文件被 `.gitignore` 且构建时重生成，但本地已有 `dist/GuiUpdaterDemo.exe` 是 0.5.5） |
 | [CHANGELOG.md L6-L16](file:///e:/code/脚手架/openai-gemini/CHANGELOG.md#L6-L16) | 有 0.5.7 / 0.5.9 | 缺 0.5.8 小节；发布 0.5.8 时 CI 只能回退用 commit message 当 notes（[build.yml L131-L133](file:///e:/code/脚手架/openai-gemini/.github/workflows/build.yml#L131-L133)） |
 
 建议：以 `updater.conf` 为唯一事实源，README 里改成引用；CHANGELOG 补齐 0.5.8；本地 `dist/` 不作为交付物。
@@ -439,7 +439,7 @@ journal::recover(cache_dir, install_dir)      journal.rs L96
 
 ### V-02 3 秒探测与 GUI 互斥体 6 秒重试的时序
 
-- 位置：[update.rs L282-L285](file:///e:/code/脚手架/openai-gemini/src/update.rs#L282-L285)（3s）；[gui.cpp L697-L716](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L697-L716)（40 × 150ms = 6s 重试互斥体）。
+- 位置：[update.rs L282-L285](file:///e:/code/脚手架/openai-gemini/src/update.rs#L282-L285)（3s）；[gui.cpp L697-L716](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L697-L716)（40 × 150ms = 6s 重试互斥体）。
 - 疑点：新版 GUI 若在 6s 内拿不到互斥体（旧 GUI 因某个消息处理卡住未退干净），会弹"程序已经在运行了"并退出 → updater 3 秒探测看到进程已退出 → 判定失败 → 回滚。旧 GUI 正常路径是"销毁窗口后立即退出"，所以概率低，但 RDP/慢机器/杀软扫描期间可能触发。
 - 验证：在旧 GUI `WM_CLOSE` 前人为 `Sleep(7000)`，再走完整更新，看是否回滚。
 
@@ -499,7 +499,7 @@ journal::recover(cache_dir, install_dir)      journal.rs L96
 7. **运行期检查**：应用常开时每 N 小时检查一次（现在只有启动后一次）。
 8. **数据/配置迁移**：如果主程序在安装目录放用户配置，需要 `migrate()` 钩子（按 `from → to` 版本执行一次），否则升级后配置结构变化会崩。
 9. **平台**：macOS 需要 `.app` 整包替换 + 签名/公证校验；Linux 需要 AppImage/包管理器策略。当前 `relaunch` 写死 `exe_name`（[update.rs L413-L443](file:///e:/code/脚手架/openai-gemini/src/update.rs#L413-L443)），非 Windows 只能"裸编译"。
-10. **可观测的协议版本**：GUI 完全忽略帧里的 `protocol` 字段（[gui.cpp L257-L284](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L257-L284)），未来改协议没有协商能力。
+10. **可观测的协议版本**：GUI 完全忽略帧里的 `protocol` 字段（[gui.cpp L257-L284](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L257-L284)），未来改协议没有协商能力。
 
 ---
 
@@ -530,16 +530,16 @@ journal::recover(cache_dir, install_dir)      journal.rs L96
 
 | 编号 | 位置 | 问题 | 后果 |
 |---|---|---|---|
-| C-01 | [gui.cpp L89-L96](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L89-L96)、[L497-L503](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L497-L503) | `gState.localVersion` 只在启动时读一次，`gLatestVersion` 可能比它旧 | BUG-12 |
-| C-02 | [gui.cpp L188-L242](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L188-L242) | 手写 JSON 扫描：依赖字段顺序、不处理 `\uD83D\uDE00` 代理对、遇到 `null` 数字返回 0 | 当前 serde 输出中文/emoji 是原始 UTF-8，暂不触发；但协议一旦改成转义输出就乱码 |
-| C-03 | [gui.cpp L257-L284](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L257-L284) | 忽略 `protocol` 字段；`sawTerminal` 标记从未使用 | 协议不兼容时静默错解析 |
-| C-04 | [gui.cpp L371-L374](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L371-L374) | `context.hwnd = gCheck;` 紧接着被覆盖 | 无害的死代码 |
-| C-05 | [gui.cpp L388-L394](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L388-L394) | busy 时只禁用检查/跳过/官网，不禁用安装/重启 | 检查进行中可点安装（BUG-22 叠加） |
-| C-06 | [gui.cpp L586-L594](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L586-L594) | `--skip` 在 UI 线程同步等待子进程 | 短暂卡 UI；可双击并发（BUG-06） |
-| C-07 | [gui.cpp L697-L716](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L697-L716) | 第二次 `CreateMutexW` 若返回 `NULL`，`GetLastError()` 可能读到旧值 | 极端情况下误判"已在运行" |
-| C-08 | [gui.cpp L672-L675](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L672-L675) | 关闭不判断 busy | BUG-23 |
-| C-09 | [gui.cpp L26](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L26) | 依赖 `app/build-config.h`；该文件被 `.gitignore`，若跳过 `build-msvc.bat` 直接按头注释的 `cl` 命令编译会用到过期版本（当前是 0.5.5） | 本地产物版本号不真实 |
-| C-10 | [gui.cpp L754-L756](file:///e:/code/脚手架/openai-gemini/app/src/gui.cpp#L754-L756) | 注释残缺（"先告诉更新器…更新器才会退出"重复） | 可维护性 |
+| C-01 | [gui.cpp L89-L96](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L89-L96)、[L497-L503](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L497-L503) | `gState.localVersion` 只在启动时读一次，`gLatestVersion` 可能比它旧 | BUG-12 |
+| C-02 | [gui.cpp L188-L242](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L188-L242) | 手写 JSON 扫描：依赖字段顺序、不处理 `\uD83D\uDE00` 代理对、遇到 `null` 数字返回 0 | 当前 serde 输出中文/emoji 是原始 UTF-8，暂不触发；但协议一旦改成转义输出就乱码 |
+| C-03 | [gui.cpp L257-L284](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L257-L284) | 忽略 `protocol` 字段；`sawTerminal` 标记从未使用 | 协议不兼容时静默错解析 |
+| C-04 | [gui.cpp L371-L374](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L371-L374) | `context.hwnd = gCheck;` 紧接着被覆盖 | 无害的死代码 |
+| C-05 | [gui.cpp L388-L394](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L388-L394) | busy 时只禁用检查/跳过/官网，不禁用安装/重启 | 检查进行中可点安装（BUG-22 叠加） |
+| C-06 | [gui.cpp L586-L594](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L586-L594) | `--skip` 在 UI 线程同步等待子进程 | 短暂卡 UI；可双击并发（BUG-06） |
+| C-07 | [gui.cpp L697-L716](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L697-L716) | 第二次 `CreateMutexW` 若返回 `NULL`，`GetLastError()` 可能读到旧值 | 极端情况下误判"已在运行" |
+| C-08 | [gui.cpp L672-L675](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L672-L675) | 关闭不判断 busy | BUG-23 |
+| C-09 | [gui.cpp L26](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L26) | 依赖 `client/build-config.h`；该文件被 `.gitignore`，若跳过 `build-msvc.bat` 直接按头注释的 `cl` 命令编译会用到过期版本（当前是 0.5.5） | 本地产物版本号不真实 |
+| C-10 | [gui.cpp L754-L756](file:///e:/code/脚手架/openai-gemini/client/src/gui.cpp#L754-L756) | 注释残缺（"先告诉更新器…更新器才会退出"重复） | 可维护性 |
 
 ### 6.3 构建 / CI / 脚本
 
@@ -549,8 +549,8 @@ journal::recover(cache_dir, install_dir)      journal.rs L96
 | B-02 | [build.yml L126-L133](file:///e:/code/脚手架/openai-gemini/.github/workflows/build.yml#L126-L133) | CHANGELOG 缺小节时回退成 commit message | 0.5.8 已发生；用户看到的更新日志变成提交信息 |
 | B-03 | [build.yml L89-L96](file:///e:/code/脚手架/openai-gemini/.github/workflows/build.yml#L89-L96) | 无 `cargo test`/`cargo clippy` 步骤 | 单测存在但 CI 不跑；回归靠手工 |
 | B-04 | [build.yml L5-L13](file:///e:/code/脚手架/openai-gemini/.github/workflows/build.yml#L5-L13) | `workflow_dispatch` 不带 tag 时用 `Cargo.toml` 版本造 tag | 文档已警告，但仍容易撞号 |
-| B-05 | [scaffold-update.ps1 L61-L69](file:///e:/code/脚手架/openai-gemini/tools/scaffold-update.ps1#L61-L69) | 复制后删除 `app\build-config.h`，但 `dist/` 里可能带旧 exe | 目标项目首次构建前有一个"版本对不上"的 exe |
-| B-06 | [build-msvc.bat L18-L21](file:///e:/code/脚手架/openai-gemini/app/build-msvc.bat#L18-L21) | `/Fo:"%ROOT%\dist\\"` 双反斜杠 | 无害 |
+| B-05 | [scaffold-update.ps1 L61-L69](file:///e:/code/脚手架/openai-gemini/scripts/scaffold-update.ps1#L61-L69) | 复制后删除 `app\build-config.h`，但 `dist/` 里可能带旧 exe | 目标项目首次构建前有一个"版本对不上"的 exe |
+| B-06 | [build-msvc.bat L18-L21](file:///e:/code/脚手架/openai-gemini/client/build-msvc.bat#L18-L21) | `/Fo:"%ROOT%\dist\\"` 双反斜杠 | 无害 |
 | B-07 | 仓库 | `dist/gui.obj`、`dist/GuiUpdaterDemo.exe`（0.5.5）存在；`.gitignore` 覆盖了 `/dist`，未被跟踪 | 本地 0.5.5 的 exe 容易被误当交付物 |
 | B-08 | 测试覆盖 | 15 个单测全部集中在 feed/contract/install/journal/state | `update.rs`（编排、重试、回滚、UAC）与 `download.rs`（哈希/半包/大小不符）**没有任何单测**，恰好是本次 P0 的集中地 |
 
@@ -589,7 +589,7 @@ journal::recover(cache_dir, install_dir)      journal.rs L96
 - 未能运行的验证：`cargo test`、`cargo build`、C++ 重新编译、真实更新链路（本机无 Rust 工具链，且需要 Release/网络）。
 - 建议的最小验证清单（修复后按序执行）：
   1. `cargo test`（重点：journal/install/feed/contract）。
-  2. 本地起 `demo/server.mjs`（8124），用 `--config config.example.json --check` 跑通"检查 → 下载 → 校验 → Ready"。
+  2. 本地起 `examples/demo/server.mjs`（8124），用 `--config config.example.json --check` 跑通"检查 → 下载 → 校验 → Ready"。
   3. 手动构造"更新器自更新中途被杀"：在 `install` 的 rename 之后 `Sleep`/断点终止，确认 `--recover` 后 `generic-updater.exe` 仍存在（验证 BUG-01）。
   4. 占用 `GuiUpdaterDemo.exe` 句柄后 `--apply`，确认 90s 重试是否生效（验证 V-01）。
   5. 下载中关闭 GUI，确认 updater 不 abort（验证 BUG-24）。

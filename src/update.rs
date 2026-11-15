@@ -5,7 +5,7 @@ use crate::feed;
 use crate::install::{self, InstallContext};
 use crate::journal;
 use crate::platform;
-use crate::protocol::{emit, State};
+use crate::protocol::{emit, emit_with_skip, State};
 use crate::state::UpdateState;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -25,6 +25,8 @@ pub enum Mode {
     Clean,
     /// 只做事务恢复（上次安装中途崩溃时按备份回滚）。
     Recover,
+    /// 记录"用户跳过了这个版本"。
+    SkipVersion { version: String },
 }
 
 fn build_client() -> Result<reqwest::blocking::Client, AppError> {
@@ -56,7 +58,18 @@ pub fn run(cfg: &Config, mode: Mode, args: &[String]) -> Result<i32, AppError> {
         Mode::Apply { parent_pid } => apply(cfg, parent_pid, args),
         Mode::Clean => clean(cfg),
         Mode::Recover => recover(cfg),
+        Mode::SkipVersion { version } => skip_version(cfg, &version),
     }
+}
+
+/// 记住"这个版本我跳过了"：写进缓存目录的 state.json，不在安装目录留文件。
+fn skip_version(cfg: &Config, version: &str) -> Result<i32, AppError> {
+    let state_path = cfg.state_path();
+    let mut state = UpdateState::load(&state_path);
+    state.skipped_version = Some(version.trim().to_string());
+    state.save(&state_path)?;
+    emit(State::Idle, "", "", 0, 0, None, false);
+    Ok(EXIT_NO_UPDATE)
 }
 
 /// 本地校验一份已发布的 feed：签名是否有效、属于哪个 key、版本号多少。
@@ -105,11 +118,11 @@ fn recover(cfg: &Config) -> Result<i32, AppError> {    match journal::recover(&c
 fn check(cfg: &Config, automatic: bool) -> Result<i32, AppError> {
     let state_path = cfg.state_path();
     let mut state = UpdateState::load(&state_path);
+    let local = cfg.local_version()?;
 
     if automatic && !state.auto_check_due(cfg.automatic_check_interval_hours) {
-        // 距离上次检查还不到间隔：按"无事发生"处理，避免每次启动都联网。
-        emit(State::Idle, "", "", 0, 0, None, true);
-        return Ok(EXIT_NO_UPDATE);
+        // 24h 内不联网，但上次已经查到的更新要照常提示，不能假装"已是最新"。
+        return Ok(report_cached(&state, &local, true));
     }
 
     emit(State::Checking, "", "", 0, 0, None, automatic);
@@ -124,15 +137,21 @@ fn check(cfg: &Config, automatic: bool) -> Result<i32, AppError> {
     state.mark_checked();
     state.save(&state_path)?;
 
-    let local = cfg.local_version()?;
     let version = feed.version.to_string();
+
+    // 把远端版本记下来，24h 内再次打开也能直接提示。
+    state.last_remote_version = Some(version.clone());
+    state.last_remote_notes = feed.notes.clone();
+    state.last_remote_size = feed.size;
+    state.save(&state_path)?;
 
     if feed.version <= local {
         emit(State::Idle, &version, "", 0, 0, None, automatic);
         return Ok(EXIT_NO_UPDATE);
     }
 
-    emit(
+    let skipped = state.skipped_version.as_deref() == Some(version.as_str());
+    emit_with_skip(
         State::Available,
         &version,
         &feed.notes,
@@ -140,8 +159,33 @@ fn check(cfg: &Config, automatic: bool) -> Result<i32, AppError> {
         feed.size,
         None,
         automatic,
+        skipped,
     );
     Ok(EXIT_UPDATE)
+}
+
+/// 不联网时用缓存里的结果：有比本地新的版本就报 Available，否则 Idle。
+fn report_cached(state: &UpdateState, local: &semver::Version, automatic: bool) -> i32 {
+    if let Some(remote) = state.last_remote_version.as_deref() {
+        if let Ok(version) = semver::Version::parse(remote) {
+            if version > *local {
+                let skipped = state.skipped_version.as_deref() == Some(remote);
+                emit_with_skip(
+                    State::Available,
+                    remote,
+                    &state.last_remote_notes,
+                    0,
+                    state.last_remote_size,
+                    None,
+                    automatic,
+                    skipped,
+                );
+                return EXIT_UPDATE;
+            }
+        }
+    }
+    emit(State::Idle, "", "", 0, 0, None, automatic);
+    EXIT_NO_UPDATE
 }
 
 fn download(cfg: &Config) -> Result<i32, AppError> {
@@ -159,11 +203,14 @@ fn download(cfg: &Config) -> Result<i32, AppError> {
     };
 
     state.mark_checked();
+    let version = feed.version.to_string();
+    let notes = feed.notes.clone();
+    state.last_remote_version = Some(version.clone());
+    state.last_remote_notes = notes.clone();
+    state.last_remote_size = feed.size;
     state.save(&state_path)?;
 
     let local = cfg.local_version()?;
-    let version = feed.version.to_string();
-    let notes = feed.notes.clone();
 
     if feed.version <= local {
         emit(State::Idle, &version, &notes, 0, 0, None, false);
@@ -342,7 +389,7 @@ fn apply(cfg: &Config, parent_pid: Option<u32>, args: &[String]) -> Result<i32, 
     if let Some(parent) = marker.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let mut child = match relaunch(cfg) {
+    let mut child = match relaunch(cfg, &marker) {
         Ok(child) => child,
         Err(error) => {
             restore_previous(&ctx, cfg, previous_version.as_ref());
@@ -354,16 +401,16 @@ fn apply(cfg: &Config, parent_pid: Option<u32>, args: &[String]) -> Result<i32, 
         let error = AppError::Install("新版启动探测失败，已回滚到旧版本".to_string());
         restore_previous(&ctx, cfg, previous_version.as_ref());
         // 旧版本已经还原，重新拉起给用户一个能用的界面。
-        let _ = relaunch(cfg);
+        let _ = relaunch(cfg, &marker);
         return Err(fail(error, &version, &notes));
     }
 
     let _ = std::fs::remove_file(&marker);
     install::cleanup(&ctx);
     clean_downloads(&cache);
-    // started.flag 所在的目录如果没有别的内容，也一并清掉。
-    let marker_dir = cfg.install_dir().join(".app-update");
-    let _ = std::fs::remove_dir(&marker_dir);
+    // 0.5.2 及更早版本会在安装目录留下 .app-update，升级后顺手清掉。
+    let legacy_dir = cfg.install_dir().join(".app-update");
+    let _ = std::fs::remove_dir(&legacy_dir);
 
     state.clear_pending();
     let _ = state.save(&state_path);
@@ -395,7 +442,7 @@ fn clean(cfg: &Config) -> Result<i32, AppError> {
     Ok(EXIT_NO_UPDATE)
 }
 
-fn relaunch(cfg: &Config) -> Result<std::process::Child, AppError> {
+fn relaunch(cfg: &Config, marker: &Path) -> Result<std::process::Child, AppError> {
     let name = match &cfg.exe_name {
         Some(name) => name.clone(),
         None => format!("{}.exe", cfg.repo.rsplit('/').next().unwrap_or("app")),
@@ -410,6 +457,7 @@ fn relaunch(cfg: &Config) -> Result<std::process::Child, AppError> {
 
     let mut command = std::process::Command::new(&exe);
     command.current_dir(cfg.install_dir());
+    command.arg("--started-marker").arg(marker);
     // 不要把自己的 stdout/stderr 管道句柄继承给新进程，否则调用方读管道会一直等不到 EOF。
     command
         .stdin(std::process::Stdio::null())
@@ -425,3 +473,4 @@ fn relaunch(cfg: &Config) -> Result<std::process::Child, AppError> {
         .spawn()
         .map_err(|e| AppError::Install(format!("拉起新版失败: {e}")))
 }
+

@@ -154,9 +154,10 @@ impl Config {
         self.cache_dir().join("backup")
     }
 
-    /// 启动探测标记：固定放在安装目录，客户端和更新器都认这个位置。
+    /// 启动探测标记：放在缓存目录，安装目录里不留任何临时文件。
+    /// 更新器拉起客户端时会把这个路径用 `--started-marker` 传过去。
     pub fn started_marker(&self) -> PathBuf {
-        self.install_dir().join(".app-update").join("started.flag")
+        self.cache_dir().join("started.flag")
     }
 
     /// 读取本地已安装版本；文件不存在时按 0.0.0 处理（首次安装场景）。
@@ -206,4 +207,5 @@ fn writable(dir: &std::path::Path) -> bool {
         Err(_) => false,
     }
 }
+
 

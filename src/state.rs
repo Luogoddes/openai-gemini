@@ -21,6 +21,16 @@ pub struct UpdateState {
     pub pending_notes: Option<String>,
     #[serde(default)]
     pub pending_staging: Option<String>,
+    /// 用户主动跳过的版本号
+    #[serde(default)]
+    pub skipped_version: Option<String>,
+    /// 上次检查到的远端版本（用于 24h 内免联网也能提示"有更新"）
+    #[serde(default)]
+    pub last_remote_version: Option<String>,
+    #[serde(default)]
+    pub last_remote_notes: String,
+    #[serde(default)]
+    pub last_remote_size: u64,
 }
 
 impl UpdateState {

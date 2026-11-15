@@ -22,6 +22,7 @@ const USAGE: &str = "\
   --apply            应用已下载的更新：备份、覆盖、清理、拉起新版
   --recover          只做事务恢复（上次安装中途崩溃时按备份回滚）
   --clean            清掉下载缓存与暂存目录
+  --skip <version>   记住「跳过这个版本」，存在缓存目录的 state.json 里
   --verify-feed <json> 本地校验发布 feed 的签名，打印 keyId 与版本
 
 选项:
@@ -57,6 +58,12 @@ fn main() {
             "--apply" => mode = Some(Mode::Apply { parent_pid: None }),
             "--recover" => mode = Some(Mode::Recover),
             "--clean" => mode = Some(Mode::Clean),
+            "--skip" => {
+                i += 1;
+                if let Some(version) = args.get(i) {
+                    mode = Some(Mode::SkipVersion { version: version.clone() });
+                }
+            }
             "--elevated" => {}
             "--parent-pid" => {
                 i += 1;
@@ -122,3 +129,4 @@ fn main() {
         }
     }
 }
+

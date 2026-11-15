@@ -48,6 +48,8 @@ struct StatusEvent<'a> {
     total: u64,
     error: Option<&'a str>,
     automatic: bool,
+    /// 这个版本是否已被用户跳过（仅 Available 有意义）
+    skipped: bool,
 }
 
 /// 向主程序推一条状态帧并立刻 flush，保证界面实时收到。
@@ -60,6 +62,33 @@ pub fn emit(
     error: Option<&str>,
     automatic: bool,
 ) {
+    emit_full(state, version, notes, received, total, error, automatic, false);
+}
+
+/// 带「已跳过」标记的状态帧。
+pub fn emit_with_skip(
+    state: State,
+    version: &str,
+    notes: &str,
+    received: u64,
+    total: u64,
+    error: Option<&str>,
+    automatic: bool,
+    skipped: bool,
+) {
+    emit_full(state, version, notes, received, total, error, automatic, skipped);
+}
+
+fn emit_full(
+    state: State,
+    version: &str,
+    notes: &str,
+    received: u64,
+    total: u64,
+    error: Option<&str>,
+    automatic: bool,
+    skipped: bool,
+) {
     let ev = StatusEvent {
         protocol: PROTOCOL,
         event_type: "status",
@@ -70,6 +99,7 @@ pub fn emit(
         total,
         error,
         automatic,
+        skipped,
     };
     // 帧序列化失败不应中断更新；降级为纯文本行。
     match serde_json::to_string(&ev) {

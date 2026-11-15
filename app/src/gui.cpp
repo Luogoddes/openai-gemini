@@ -81,15 +81,16 @@ struct JobResult {
   std::wstring notes;
   std::wstring error;
   unsigned long long size = 0;
+  bool skipped = false;
 };
 
 struct AppState {
   std::wstring baseDir;
   std::wstring updaterPath;
   std::wstring versionPath;
-  std::wstring skipPath;
+  std::wstring markerPath;
   std::wstring localVersion;
-  std::wstring skippedVersion;
+  std::wstring availableVersion;
   std::wstring pendingVersion;
   bool busy = false;
 };
@@ -272,6 +273,7 @@ void HandleFrame(const std::string& line, CaptureContext* context) {
   context->result.version = JsonString(line, "version");
   context->result.notes = JsonString(line, "notes");
   context->result.error = JsonString(line, "error");
+  context->result.skipped = line.find("\"skipped\":true") != std::string::npos;
   unsigned long long total = JsonNumber(line, "total");
   if (total > 0) context->result.size = total;
 
@@ -470,22 +472,25 @@ void OnJobDone(HWND window, JobResult* result) {
 
   // 检查结束
   if (result->state == L"Available") {
-    if (!gState.skippedVersion.empty() && result->version == gState.skippedVersion) {
-      SetWindowTextW(gLatestVersion, result->version.c_str());
-      SetWindowTextW(gUpdateHint, L"（已跳过此版本）");
-      SetWindowTextW(gNotes, result->notes.c_str());
+    gState.availableVersion = result->version;
+    SetWindowTextW(gLatestVersion, result->version.c_str());
+    SetWindowTextW(gNotes, result->notes.empty() ? L"（该版本没有填写更新日志）" : result->notes.c_str());
+    SetWindowTextW(gPackageSize, FormatBytes(result->size).c_str());
+    if (result->skipped) {
+      // 用户之前点过"跳过"，但依然要显示"有更新"，只是不让他直接安装。
+      SetWindowTextW(gUpdateHint, L"（有更新 · 已跳过）");
       EnableWindow(gInstall, FALSE);
-      SetStatus(L"该版本已被跳过，可在「跳过此版本」再次切换");
+      SetStatus(L"版本 " + result->version + L" 已被跳过，可点「跳过此版本」恢复提示");
       delete result;
       return;
     }
-    SetWindowTextW(gLatestVersion, result->version.c_str());
     SetWindowTextW(gUpdateHint, L"（有更新）");
-    SetWindowTextW(gPackageSize, FormatBytes(result->size).c_str());
-    SetWindowTextW(gNotes, result->notes.empty() ? L"（该版本没有填写更新日志）" : result->notes.c_str());
     EnableWindow(gInstall, TRUE);
     SetStatus(L"发现新版本 " + result->version);
-  } else if (result->state == L"Idle") {
+    delete result;
+    return;
+  }
+  if (result->state == L"Idle") {
     SetWindowTextW(gUpdateHint, L"（已是最新）");
     if (!result->version.empty()) {
       SetWindowTextW(gLatestVersion, result->version.c_str());
@@ -573,20 +578,15 @@ void LoadLocalVersion() {
   SetWindowTextW(gLocalVersion, text.c_str());
 }
 
-void LoadSkippedVersion() {
-  gState.skippedVersion = Trim(ReadTextFile(gState.skipPath));
-}
-
-void SkipCurrentVersion(HWND window) {
-  wchar_t version[64] = {};
-  GetWindowTextW(gLatestVersion, version, 64);
-  if (wcslen(version) == 0 || wcscmp(version, L"-") == 0) return;
-  gState.skippedVersion = version;
-  WriteTextFile(gState.skipPath, gState.skippedVersion);
+// 跳过状态不落文件：交给更新器的 --skip 写进它的 state.json。
+void SkipCurrentVersion() {
+  if (gState.availableVersion.empty()) return;
+  CaptureContext context;
+  context.hwnd = nullptr;
+  RunUpdaterCapture(L"--skip " + gState.availableVersion, &context);
   SetWindowTextW(gUpdateHint, L"（已跳过此版本）");
   EnableWindow(gInstall, FALSE);
-  SetStatus(L"已跳过版本 " + gState.skippedVersion);
-  (void)window;
+  SetStatus(L"已跳过版本 " + gState.availableVersion);
 }
 
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -594,7 +594,6 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     case WM_CREATE:
       BuildUi(window);
       LoadLocalVersion();
-      LoadSkippedVersion();
       SetTimer(window, 1, 400, nullptr);
       return 0;
 
@@ -614,7 +613,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
       } else if (id == IDC_RESTART) {
         BeginApply(window);
       } else if (id == IDC_SKIP) {
-        SkipCurrentVersion(window);
+        SkipCurrentVersion();
       } else if (id == IDC_HOMEPAGE) {
         ShellExecuteW(nullptr, L"open", APP_HOMEPAGE, nullptr, nullptr, SW_SHOWNORMAL);
       }
@@ -663,11 +662,21 @@ std::wstring ExecutablePath() {
   return std::wstring(buffer, length);
 }
 
-// 更新器在 Reapply 后等这个标记文件来确认"新版真的起来了"，超时会回滚。
+// 更新器拉起新版时会用 --started-marker 把标记路径传过来（在缓存目录里，不在安装目录）。
+// 写完这个标记，更新器才会认为"新版起来了"；拿不到参数时退回临时目录。
 void SignalStarted() {
-  std::wstring directory = gState.baseDir + L"\\.app-update";
-  CreateDirectoryW(directory.c_str(), nullptr);
-  WriteTextFile(directory + L"\\started.flag", L"started");
+  std::wstring path = gState.markerPath;
+  if (path.empty()) {
+    wchar_t temp[MAX_PATH * 2] = {};
+    if (GetTempPathW(MAX_PATH * 2, temp) == 0) return;
+    path = std::wstring(temp) + L"generic-updater-started.flag";
+  }
+  size_t slash = path.find_last_of(L"\\/");
+  if (slash != std::wstring::npos) {
+    std::wstring directory = path.substr(0, slash);
+    CreateDirectoryW(directory.c_str(), nullptr);
+  }
+  WriteTextFile(path, L"started");
 }
 
 // 启动时先把上次可能中断的安装事务恢复掉，再谈检查更新。
@@ -703,7 +712,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
   gState.baseDir = DirectoryOf(ExecutablePath());
   gState.updaterPath = gState.baseDir + L"\\generic-updater.exe";
   gState.versionPath = gState.baseDir + L"\\version.txt";
-  gState.skipPath = gState.baseDir + L"\\skipped-version.txt";
+  // 更新器重启新版时会带 --started-marker <path>
+  {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argv) {
+      for (int index = 1; index + 1 < argc; ++index) {
+        if (wcscmp(argv[index], L"--started-marker") == 0) {
+          gState.markerPath = argv[index + 1];
+          break;
+        }
+      }
+      LocalFree(argv);
+    }
+  }
 
 
   INITCOMMONCONTROLSEX controls = {};
@@ -746,6 +768,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
   if (mutex) CloseHandle(mutex);
   return (int)message.wParam;
 }
+
+
 
 
 

@@ -91,6 +91,8 @@ jobs:
 
       - name: Build GUI client (C++)
         shell: cmd
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.version }}
         run: app\build-msvc.bat
 
       - name: Package portable zip and metadata
@@ -178,5 +180,6 @@ jobs:
             build/out/*.zip
             build/out/*.sha256
           fail_on_unmatched_files: true
+
 
 

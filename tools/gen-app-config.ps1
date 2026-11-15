@@ -1,11 +1,14 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
 .SYNOPSIS
   Generate app/build-config.h from updater.conf.
 
 .DESCRIPTION
-  The GUI only needs a few build-time constants (homepage, window title, exe name).
+  The GUI only needs a few build-time constants (homepage, window title, exe name, build version).
   Everything else lives in the Rust updater, compiled from the same updater.conf.
+
+  APP_BUILD_VERSION prefers $env:RELEASE_VERSION (CI passes the tag-derived version),
+  then updater.conf's ui_version, then Cargo.toml's version.
 #>
 [CmdletBinding()]
 param(
@@ -14,8 +17,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if (-not $ConfPath) { $ConfPath = Join-Path $PSScriptRoot '..\updater.conf' }
-if (-not $OutPath) { $OutPath = Join-Path $PSScriptRoot '..\app\build-config.h' }
+$repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+if (-not $ConfPath) { $ConfPath = Join-Path $repoRoot 'updater.conf' }
+if (-not $OutPath) { $OutPath = Join-Path $repoRoot 'app\build-config.h' }
 $ConfPath = [IO.Path]::GetFullPath($ConfPath)
 $OutPath = [IO.Path]::GetFullPath($OutPath)
 
@@ -33,6 +37,17 @@ function Get-Value([string]$key, [string]$fallback) {
     return $fallback
 }
 
+function Get-BuildVersion {
+    if ($env:RELEASE_VERSION) { return $env:RELEASE_VERSION.Trim() }
+    if ($values.ContainsKey('ui_version') -and $values['ui_version']) { return $values['ui_version'].Trim() }
+    $cargo = Join-Path $repoRoot 'Cargo.toml'
+    if (Test-Path -LiteralPath $cargo) {
+        $match = Select-String -Path $cargo -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
+        if ($match) { return $match.Matches[0].Groups[1].Value }
+    }
+    return '0.0.0'
+}
+
 function To-CLiteral([string]$text) {
     return 'L"' + $text.Replace('\', '\\').Replace('"', '\"') + '"'
 }
@@ -45,8 +60,9 @@ $lines = @(
     ('#define APP_HOMEPAGE ' + (To-CLiteral (Get-Value 'homepage' 'https://github.com'))),
     ('#define APP_EXE_NAME ' + (To-CLiteral (Get-Value 'exe_name' 'app.exe'))),
     ('#define APP_WINDOW_TITLE ' + (To-CLiteral (Get-Value 'window_title' 'Generic Updater Demo'))),
+    ('#define APP_BUILD_VERSION ' + (To-CLiteral (Get-BuildVersion))),
     ''
 )
 
 [IO.File]::WriteAllText($OutPath, ($lines -join "`r`n"), (New-Object Text.UTF8Encoding($false)))
-Write-Output "generated $OutPath"
+Write-Output "generated $OutPath (version $(Get-BuildVersion))"

@@ -46,7 +46,7 @@
 
 namespace {
 
-const wchar_t* kWindowTitle = APP_WINDOW_TITLE;
+std::wstring gWindowTitle;
 const wchar_t* kMutexName = L"Local\\GenericUpdaterDemo.SingleInstance";
 
 const int WM_APP_DONE = WM_APP + 1;
@@ -65,6 +65,7 @@ enum ControlId {
   IDC_HOMEPAGE = 1010,
   IDC_INSTALL = 1011,
   IDC_RESTART = 1012,
+  IDC_BUILD_INFO = 1013,
 };
 
 enum JobMode {
@@ -107,6 +108,7 @@ HWND gSkip = nullptr;
 HWND gHomepage = nullptr;
 HWND gInstall = nullptr;
 HWND gRestart = nullptr;
+HWND gBuildInfo = nullptr;
 
 HFONT gFont = nullptr;
 HFONT gTitleFont = nullptr;
@@ -548,6 +550,12 @@ void BuildUi(HWND window) {
 
   gStatus = CreateControl(L"STATIC", L"", 0, 24, 372, 586, 40, IDC_STATUS, window);
 
+  gBuildInfo = CreateControl(L"STATIC", L"", 0, 24, 470, 586, 20, IDC_BUILD_INFO, window);
+  {
+    std::wstring info = L"更新器 v" + std::wstring(APP_BUILD_VERSION) + L" · 配置编译期内置 · 元数据强制验签";
+    SetWindowTextW(gBuildInfo, info.c_str());
+  }
+
   gSkip = CreateControl(L"BUTTON", L"跳过此版本", BS_PUSHBUTTON, 24, 424, 130, 38, IDC_SKIP, window);
   gHomepage = CreateControl(L"BUTTON", L"官网下载", BS_PUSHBUTTON, 166, 424, 130, 38, IDC_HOMEPAGE, window);
   gInstall = CreateControl(L"BUTTON", L"立即安装", BS_DEFPUSHBUTTON, 470, 424, 140, 38, IDC_INSTALL, window);
@@ -713,10 +721,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
   windowClass.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
   RegisterClassExW(&windowClass);
 
-  RECT rect = {0, 0, 640, 486};
+  RECT rect = {0, 0, 640, 506};
   AdjustWindowRect(&rect, WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE);
+  gWindowTitle = std::wstring(APP_WINDOW_TITLE) + L"  ·  v" + APP_BUILD_VERSION;
   HWND window = CreateWindowExW(
-      WS_EX_APPWINDOW, L"GenericUpdaterDemoWindow", kWindowTitle,
+      WS_EX_APPWINDOW, L"GenericUpdaterDemoWindow", gWindowTitle.c_str(),
       WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT,
       rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr, instance, nullptr);
   if (!window) return 1;
@@ -737,5 +746,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
   if (mutex) CloseHandle(mutex);
   return (int)message.wParam;
 }
+
 
 

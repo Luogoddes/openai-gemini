@@ -1,3 +1,9 @@
 {
-  "keys": []
+    "keys":  [
+                 {
+                     "id":  "generic-updater-2026-01",
+                     "modulus":  "mh8voXK3Wyq9pMhvl0iW5teYafniAsouPH6CA+nC+pDmsFHgip7XXeyv3FKLSki2y0RjLER9hVeSTUHqfLyuFCWJDn6HQcxuUemzYpXSrygis+K2DRsPwAc93cVzKoWiitk5kHzO3hwlmnameJYXEaWNBX0+5v6eig9Peo5XmdHSyM7b8BHSV8OAYLDxutjATjFOYEM9U8FYgP8MiIk7LijHDq8G886v6/k7Hgb26KUpNwEvlIIS4XXmx580P+k0ECm0Ln164pMzRhW6rUY3xnxCUJQou8gt2AEc7qsEItHNzF/73nRovUPpXi5iBQUMkpoLuZ3IKQAuYYcIVrcyNa9sVX7MGxhgFZzzt6gPjSUD8ozNSPQlD8yjNpiXjQVP7V/hNsmd4FUu1qIuDrJyokQjzAlhkiHMpvoTQpgssMZWL7G08TgDVLv9NGngvae5vyI02VkzS5dWkNkXDq7dWL5u5ftzIwFte9xebHqcNcRrDPxO09rRmeofKnkR8Vsx",
+                     "exponent":  "AQAB"
+                 }
+             ]
 }

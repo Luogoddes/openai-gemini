@@ -151,8 +151,9 @@ std::wstring ReadTextFile(const std::wstring& path) {
 }
 
 bool WriteTextFile(const std::wstring& path, const std::wstring& text) {
-  HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                            FILE_ATTRIBUTE_NORMAL, nullptr);
+  HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE,
+                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
   if (file == INVALID_HANDLE_VALUE) return false;
   std::string utf8 = WideToUtf8(text);
   DWORD written = 0;
@@ -303,7 +304,7 @@ DWORD RunUpdaterCapture(const std::wstring& arguments, CaptureContext* context) 
   PROCESS_INFORMATION process = {};
   std::wstring commandLine = Quote(gState.updaterPath) + L" " + arguments;
 
-  BOOL created = CreateProcessW(nullptr, &commandLine[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
+  BOOL created = CreateProcessW(nullptr, &commandLine[0], nullptr, nullptr, TRUE, 0,
                                 nullptr, gState.baseDir.c_str(), &startup, &process);
   CloseHandle(writePipe);
   if (!created) {
@@ -345,9 +346,8 @@ bool SpawnApply() {
   STARTUPINFOW startup = {};
   startup.cb = sizeof(startup);
   PROCESS_INFORMATION process = {};
-  BOOL created = CreateProcessW(nullptr, &commandLine[0], nullptr, nullptr, FALSE,
-                                CREATE_NO_WINDOW | DETACHED_PROCESS, nullptr, gState.baseDir.c_str(),
-                                &startup, &process);
+  BOOL created = CreateProcessW(nullptr, &commandLine[0], nullptr, nullptr, FALSE, 0,
+                                nullptr, gState.baseDir.c_str(), &startup, &process);
   if (created) {
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
@@ -394,7 +394,11 @@ void SetBusy(bool busy, const wchar_t* hint) {
 }
 
 void ShowProgress(bool visible, int percent) {
-  ShowWindow(gProgress, visible ? SW_SHOW : SW_HIDE);
+  static bool shown = false;
+  if (visible != shown) {
+    ShowWindow(gProgress, visible ? SW_SHOW : SW_HIDE);
+    shown = visible;
+  }
   SendMessageW(gProgress, PBM_SETPOS, (WPARAM)(percent < 0 ? 0 : percent), 0);
 }
 
@@ -679,12 +683,7 @@ void SignalStarted() {
   WriteTextFile(path, L"started");
 }
 
-// 启动时先把上次可能中断的安装事务恢复掉，再谈检查更新。
-void RunRecovery() {
-  CaptureContext context;
-  context.hwnd = nullptr;
-  RunUpdaterCapture(L"--recover", &context);
-}
+
 
 }  // namespace
 
@@ -755,9 +754,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
   ShowWindow(window, showCommand);
   UpdateWindow(window);
   // 先告诉更新器「新版起来了」，它才会退出并释放被改名的旧镜像，
-  // 后面的 RunRecovery 才能在重试窗口内把 `*.old-*` 删掉。
+  // 更新器才会退出，把 `*.old-*` 旧镜像释放掉。
   SignalStarted();
-  RunRecovery();
 
   MSG message = {};
   while (GetMessageW(&message, nullptr, 0, 0) > 0) {

@@ -118,6 +118,8 @@ fn recover(cfg: &Config) -> Result<i32, AppError> {    match journal::recover(&c
 fn check(cfg: &Config, automatic: bool) -> Result<i32, AppError> {
     let state_path = cfg.state_path();
     let mut state = UpdateState::load(&state_path);
+    // 检查前先把上次可能中断的安装事务恢复掉，客户端就不用再单独拉一次 --recover。
+    journal::recover(&cfg.cache_dir(), &cfg.install_dir())?;
     let local = cfg.local_version()?;
 
     if automatic && !state.auto_check_due(cfg.automatic_check_interval_hours) {

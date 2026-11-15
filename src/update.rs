@@ -89,7 +89,7 @@ fn check(cfg: &Config, automatic: bool) -> Result<i32, AppError> {
         &version,
         &feed.notes,
         0,
-        0,
+        feed.size,
         None,
         automatic,
     );
@@ -119,7 +119,7 @@ fn download(cfg: &Config) -> Result<i32, AppError> {
         return Ok(EXIT_NO_UPDATE);
     }
 
-    emit(State::Available, &version, &notes, 0, 0, None, false);
+    emit(State::Available, &version, &notes, 0, feed.size, None, false);
 
     let cache = cfg.cache_dir();
     std::fs::create_dir_all(&cache)?;
@@ -276,6 +276,11 @@ fn relaunch(cfg: &Config) -> Result<(), AppError> {
 
     let mut command = std::process::Command::new(&exe);
     command.current_dir(cfg.install_dir());
+    // 不要把自己的 stdout/stderr 管道句柄继承给新进程，否则调用方读管道会一直等不到 EOF。
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

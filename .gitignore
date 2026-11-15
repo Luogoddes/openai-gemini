@@ -1,4 +1,6 @@
 /target
+/dist
+/build
 /*.exe
 *.part
 .app-update/

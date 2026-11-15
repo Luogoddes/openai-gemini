@@ -1,6 +1,6 @@
 [package]
 name = "generic-updater"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "外置通用更新器：被任意语言的主程序调用，基于 Release 元数据检查/下载/校验/旁置替换/回滚"
 publish = false

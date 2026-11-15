@@ -57,8 +57,17 @@ pub fn prepare_staging(
     Ok(())
 }
 
+/// 正在运行的 updater 自身的 exe 路径（规范化后用于比较）。
+fn running_exe() -> Option<std::path::PathBuf> {
+    std::env::current_exe().ok().and_then(|path| path.canonicalize().ok())
+}
+
 /// 逐文件备份旧版本到 backup，再把 staging 覆盖到 target_root。
 /// 任何一步出错都可以用 [`rollback`] 还原。
+///
+/// 注意：如果发布包里也带了 `generic-updater.exe`，它此刻正被运行中的本进程占用。
+/// Windows 不允许覆盖正在执行的镜像，所以这里跳过它——updater 自身的升级需要
+/// "先复制到临时目录再由副本替换"的方案，等后续再补。
 pub fn install(
     staging: &Path,
     target_root: &Path,
@@ -66,6 +75,8 @@ pub fn install(
 ) -> Result<InstallContext, AppError> {
     std::fs::create_dir_all(target_root)?;
     std::fs::create_dir_all(backup)?;
+
+    let running = running_exe();
 
     for entry in WalkDir::new(staging) {
         let entry = entry.map_err(|e| AppError::Install(format!("遍历暂存目录失败: {e}")))?;
@@ -78,6 +89,13 @@ pub fn install(
             .map_err(|e| AppError::Install(e.to_string()))?;
         let target = target_root.join(rel);
         let backup_file = backup.join(rel);
+
+        if let (Some(running), Ok(target_canonical)) = (&running, target.canonicalize()) {
+            if *running == target_canonical {
+                eprintln!("跳过正在运行的更新器自身: {}", target.display());
+                continue;
+            }
+        }
 
         if let Some(p) = target.parent() {
             std::fs::create_dir_all(p)?;

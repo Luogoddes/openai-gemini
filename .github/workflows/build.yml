@@ -1,8 +1,7 @@
-name: build-windows-updater
+name: build-windows-release
 
-# 云端编译：本地不需要装 Rust。打 tag 或手动触发后由 GitHub Actions 在 Windows runner
-# 上编译 exe，再打包 portable zip、算 SHA256、生成 latest-version-windows-x64.json，
-# 一并挂到 Release。客户端信任链就是"元数据里的 sha256 + 这个 zip"。
+# 一条龙：编译 Rust 更新器 + C++ GUI 客户端 → 打包 zip → 出 SHA256 与 feed 元数据 → 挂到 Release。
+# 打 v* tag 或手动触发都会跑，产物可以被客户端直接消费，用于真实链路测试。
 on:
   push:
     tags: ["v*"]
@@ -23,8 +22,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # 需要完整 tag 历史，否则 action-gh-release 无法识别当前提交对应的 tag。
           fetch-depth: 0
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -46,10 +49,6 @@ jobs:
             tag="$INPUT_TAG"
           else
             version="$(sed -nE 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' Cargo.toml | head -n1)"
-            if [ -z "$version" ]; then
-              echo "无法从 Cargo.toml 解析 version" >&2
-              exit 1
-            fi
             tag="v${version}"
           fi
           case "$tag" in
@@ -59,10 +58,14 @@ jobs:
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "resolved tag: ${tag}"
 
-      - name: Build release
+      - name: Build updater (Rust)
         run: cargo build --release --target x86_64-pc-windows-msvc
 
-      - name: Package portable zip, checksums and feed
+      - name: Build GUI client (C++)
+        shell: cmd
+        run: app\build-msvc.bat
+
+      - name: Package portable zip and metadata
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -72,20 +75,22 @@ jobs:
           $product = "generic-updater"
           $zipName = "$product-$version-windows-x64-portable.zip"
 
-          New-Item -ItemType Directory -Force "dist/payload" | Out-Null
-          Copy-Item "target/x86_64-pc-windows-msvc/release/generic-updater.exe" "dist/payload/generic-updater.exe"
-          Copy-Item "config.example.json" "dist/payload/config.example.json"
-          Set-Content -Path "dist/payload/version.txt" -Value $version -Encoding ascii
+          $payload = "build\payload"
+          New-Item -ItemType Directory -Force $payload | Out-Null
+          Copy-Item "dist\GuiUpdaterDemo.exe" "$payload\GuiUpdaterDemo.exe"
+          Copy-Item "target\x86_64-pc-windows-msvc\release\generic-updater.exe" "$payload\generic-updater.exe"
+          Copy-Item "app\app.ini" "$payload\app.ini"
+          Set-Content -Path "$payload\version.txt" -Value $version -Encoding ascii
+          Set-Content -Path "$payload\README.txt" -Value "Generic Updater Demo $version`nRun GuiUpdaterDemo.exe; generic-updater.exe must stay in the same folder." -Encoding utf8
 
-          Compress-Archive -Path "dist/payload/*" -DestinationPath "dist/$zipName" -Force
+          New-Item -ItemType Directory -Force "build\out" | Out-Null
+          Compress-Archive -Path "$payload\*" -DestinationPath "build\out\$zipName" -Force
 
-          $size = (Get-Item "dist/$zipName").Length
-          $sha = (Get-FileHash "dist/$zipName" -Algorithm SHA256).Hash.ToLower()
-          # snow-shot 风格的旁置校验文件，方便手工核对
-          Set-Content -Path "dist/$zipName.sha256" -Value "$sha  $zipName" -Encoding ascii
+          $size = (Get-Item "build\out\$zipName").Length
+          $sha = (Get-FileHash "build\out\$zipName" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "build\out\$zipName.sha256" -Value "$sha  $zipName" -Encoding ascii
 
-          # git log 在 PowerShell 里是按行返回的字符串数组，先 join 成多行文本再 trim，
-          # 否则 ConvertTo-Json 会把 notes 变成数组，客户端按字符串解析就会失败。
+          # git log 在 PowerShell 里是字符串数组，先 join 再 trim，否则 notes 会变成数组。
           $notes = ((git log -1 --pretty=%B) -join "`n").Trim()
           $feed = [ordered]@{
             schema      = 1
@@ -104,20 +109,18 @@ jobs:
               }
             )
           }
-          $feed | ConvertTo-Json -Depth 6 | Set-Content -Path "dist/latest-version-windows-x64.json" -Encoding utf8
+          $feed | ConvertTo-Json -Depth 6 | Set-Content -Path "build\out\latest-version-windows-x64.json" -Encoding utf8
 
-          Get-ChildItem dist -File | Select-Object Name, Length
+          Get-ChildItem build\out | Select-Object Name, Length
 
       - name: Upload assets to Release
         uses: softprops/action-gh-release@v2
         with:
-          # 显式指定 tag：workflow_dispatch 场景没有 tag 上下文，缺了这行就会报
-          # "GitHub Releases requires a tag"。tag 不存在时由 GitHub 在 target_commitish 上创建。
           tag_name: ${{ steps.meta.outputs.tag }}
           name: ${{ steps.meta.outputs.tag }}
           target_commitish: ${{ github.sha }}
           files: |
-            dist/latest-version-windows-x64.json
-            dist/*.zip
-            dist/*.sha256
+            build/out/latest-version-windows-x64.json
+            build/out/*.zip
+            build/out/*.sha256
           fail_on_unmatched_files: true

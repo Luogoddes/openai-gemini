@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "product": "myapp",
+  "version": "1.2.0",
+  "publishedAt": "2026-11-15T06:30:12Z",
+  "platform": "windows-x64",
+  "notes": "## v1.2.0 更新内容\n\n- 新增：自动更新（默认 24 小时检查一次）\n- 新增：下载进度与 SHA256 校验\n- 修复：重启后旧版本文件残留\n- 优化：更新完成后自动清理缓存目录\n",
+  "packages": [
+    {
+      "variant": "portable",
+      "kind": "portable",
+      "path": "portable",
+      "size": 408,
+      "sha256": "ec820637fe03c327b1c15468bb7cdf6f1565810270d3f3adbe69a0a79a46d777"
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>通用更新器 · 交互测试台</title>
+<link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="dot"></span>
+    <strong>generic-updater</strong>
+    <span class="muted">更新流程测试台</span>
+  </div>
+  <div class="version-chip">当前版本 <b id="installed-version">1.0.0</b></div>
+</header>
+
+<main class="grid">
+  <section class="card" id="card-status">
+    <h2>状态</h2>
+    <div class="state-row">
+      <span id="state-badge" class="badge badge-idle">Idle</span>
+      <span id="state-detail" class="muted">等待操作</span>
+    </div>
+    <p class="hint" id="next-check-hint"></p>
+    <div class="progress" id="progress-wrap" hidden>
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      <div class="progress-meta"><span id="progress-text">0%</span><span id="progress-bytes"></span></div>
+    </div>
+    <div class="actions">
+      <button id="btn-check" class="btn">手动检查（刷新）</button>
+      <button id="btn-auto" class="btn btn-ghost">模拟一次"打开软件"</button>
+    </div>
+    <p class="hint">自动检查：距上次检查满 <b id="interval-hours">24</b> 小时才会联网；手动检查不受限制。</p>
+  </section>
+
+  <section class="card" id="card-release" hidden>
+    <h2>可用更新</h2>
+    <div class="release-head">
+      <span class="release-version" id="release-version">v0.0.0</span>
+      <span class="badge badge-available" id="release-kind">portable</span>
+    </div>
+    <div class="notes" id="release-notes"></div>
+    <div class="actions">
+      <button id="btn-download" class="btn btn-primary">立即更新</button>
+    </div>
+  </section>
+
+  <section class="card" id="card-ready" hidden>
+    <h2>更新就绪</h2>
+    <p>新版本 <b id="ready-version"></b> 已下载、校验并解压完毕。退出主程序后点击下面按钮完成替换。</p>
+    <div class="actions">
+      <button id="btn-restart" class="btn btn-primary">重启软件</button>
+      <button id="btn-discard" class="btn btn-ghost">放弃这次更新</button>
+    </div>
+  </section>
+
+  <section class="card" id="card-failed" hidden>
+    <h2>更新失败</h2>
+    <p class="error" id="failed-reason"></p>
+    <div class="actions">
+      <button id="btn-retry" class="btn">重试</button>
+    </div>
+  </section>
+
+  <section class="card span-2" id="card-log">
+    <h2>updater → 主程序 状态帧 <span class="muted small">（stdout 一行一条 JSON，和 Rust 版协议一致）</span></h2>
+    <pre id="log" class="log"></pre>
+    <div class="actions">
+      <button id="btn-reset" class="btn btn-ghost">重置演示数据</button>
+    </div>
+  </section>
+</main>
+
+<script src="./app.js"></script>
+</body>
+</html>

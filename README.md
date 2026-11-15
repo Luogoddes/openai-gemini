@@ -1,165 +1,184 @@
 # generic-updater：外置通用更新器（Rust）
 
-一个被任意语言主程序调用的独立更新器：基于 GitHub Release 做版本检查、下载、SHA256 校验、旁置替换、失败回滚。架构对标 snow-shot 的外置 updater。
+被任意语言的主程序拉起，基于 Release 元数据完成 **检查 → 下载 → 校验 → 旁置替换 → 回滚 → 重启** 的独立更新器。状态机与元数据形态参考了 [snow-shot 的 `snow-shot-updater`](https://gitee.com/mg-chao/snow-apps/tree/main/snow_shot/rust/snow-shot-updater)，但代码是独立实现（对方的 `snow_shot/`、`snow-crates/` 是 GPL-3.0，只借鉴契约与流程，不复制实现）。
 
-## 0. 先回答最容易困惑的问题：我电脑没装 Rust，能开发/编译吗？
+## 1. 三十秒体验（不用装 Rust）
 
-**分清两个角色：**
+`demo/` 是一份纯前端测试台，把整条更新链路跑在浏览器里：
 
-- **最终用户电脑**：永远不需要 Rust。updater 是开发者提前编译好的 `generic-updater.exe`，随软件一起分发，用户只运行这个成品 exe。
-- **你（开发者）电脑**：要把 Rust 源码变成 exe，必须经过一次编译。但编译不一定要在你本地做，有两条路。
-
-### 路径 A：本地装 Rust 工具链编译（一次性安装）
-
-1. 装 Rust 工具链（rustup）：https://rustup.rs ，安装时选默认 stable 工具链；
-2. Windows 还需要 **MSVC C++ 生成工具 + Windows SDK**：装 Visual Studio Installer，勾选"使用 C++ 的桌面开发"（rustup 的 msvc 目标依赖它）；
-3. 打开终端，在项目目录执行：
-
-```bash
-cargo build --release
+```powershell
+cd demo
+node server.mjs
+# 打开 http://127.0.0.1:8124/
 ```
 
-4. 产物在：
+页面会自动触发一次"打开软件时检查"，然后可以点 **立即更新** 看下载进度 + SHA256 校验，再点 **重启软件** 走完备份/覆盖/清理/拉起。右上角的当前版本会从 `1.0.0` 变成 `1.2.0`。
+
+> 为什么不用 `python -m http.server`：本机安全软件会拦截 URL 以 `.zip` 结尾的浏览器请求（直接回 204 空响应），所以 demo 走 `/feed/portable` 这个无扩展名路径返回同一份字节。真实更新器用 reqwest，不受这个浏览器侧拦截影响。
+
+## 2. 更新流程
 
 ```
-target\release\generic-updater.exe
+                          ┌────────────────────────────┐
+ 打开软件 ──(--check --auto)──► 距上次检查 ≥ 24h ? ──否──► Idle（不联网）
+                          └───────────┬────────────────┘
+                                     是
+ 点"刷新" ──(--check)──────────────────┤
+                                      ▼
+                                 Checking ──► Available(version + notes)
+                                      │              │ 用户同意
+                                      ▼              ▼
+                                 Idle(已最新)    Downloading(received/total)
+                                                     │
+                                                     ▼
+                                                 Verifying(SHA256)
+                                                     │
+                                                     ▼
+                                                  Ready  ← 等用户点"重启软件"
+                                                     │ 主程序退出
+                                                     ▼
+                                                 Applying（备份→覆盖→清理）
+                                                     │
+                                                     ▼
+                                                 relaunch 新版
 ```
 
-> 想明确指定 Windows 目标：`cargo build --release --target x86_64-pc-windows-msvc`，产物在 `target\x86_64-pc-windows-msvc\release\`。
+对应三个命令：
 
-### 路径 B：GitHub Actions 云端编译（本地零环境，推荐不想装工具链时用）
+| 命令 | 做什么 | 退出码 |
+|---|---|---|
+| `--check --auto` | 自动检查，受 `automatic_check_interval_hours` 约束 | 0 无更新 / 2 有更新 |
+| `--check` | 手动检查，无视间隔 | 同上 |
+| `--download` | 检查 + 下载 + 校验 + 解压暂存，停在 `Ready` | 0 无更新 / 2 就绪 |
+| `--apply` | 应用已暂存的更新：备份、覆盖、清理、拉起 | 2 成功 |
+| `--clean` | 清掉下载缓存与暂存 | 0 |
 
-仓库已带 `.github/workflows/build.yml`：
+主程序侧的最小对接：
 
-- 推一个 `v*` tag（或在 Actions 页面手动触发）；
-- GitHub 的 `windows-latest` 云端机器自带 VS 工具链和 Rust 环境；
-- 自动 `cargo build --release`，把 `generic-updater.exe` 挂到对应 Release 资产。
+1. 启动时跑 `--check --auto`，读到 `Available` 就弹更新提示（带版本号和 notes）；
+2. 用户同意 → `--download`，按 `Downloading` 帧刷新进度条；
+3. 拿到 `Ready` 后显示 **重启软件** 按钮；用户点击 → 主程序退出 → 拉起 `--apply`。
 
-你本地只需要写代码、push，不用装 Rust、不用装 VS。
-
-### 当前验证状态
-
-- 本项目已在 Linux 环境 `cargo build --release` 通过，二进制可运行；
-- Windows `.exe` 在 Windows runner（路径 B）或本地 MSVC 工具链（路径 A）产出；代码里 Windows 专属行为用标准库实现，未引入额外系统依赖。
-
-## 1. 项目结构
-
-```
-rust-updater/
-├── Cargo.toml              # 依赖与 release 优化配置
-├── config.example.json      # 每软件一份的配置模板
-├── .github/workflows/build.yml
-└── src/
-    ├── main.rs             # 入口：解析命令行参数
-    ├── config.rs           # 配置读取、本地版本号读写
-    ├── protocol.rs         # ↔ 主程序的 JSON 帧协议（状态/进度/版本/变更说明）
-    ├── feed.rs             # GitHub Release API 拉取、版本匹配
-    ├── download.rs         # 流式下载 .part、SHA256 校验、进度回调
-    ├── install.rs          # 解压 staging、逐文件备份覆盖、回滚、清理
-    ├── update.rs           # 编排：检查 → 下载 → 校验 → 安装 → 重启
-    └── error.rs            # 统一错误类型
-```
-
-## 2. 命令行用法
-
-```bash
-# 只检查有没有新版本（不下载不安装）
-generic-updater.exe --check  app.json
-
-# 完整更新：检查 → 下载 → 校验 → 安装 → 拉起新版
-generic-updater.exe --update app.json --parent-pid 12345
-```
-
-| 参数 | 含义 |
-|---|---|
-| `--check` | 仅检查模式 |
-| `--update` | 完整更新模式（默认） |
-| `<config.json>` | 本软件的配置文件路径 |
-| `--parent-pid <pid>` | 主程序 PID，用于等待旧进程退出（Windows 生产版接 OpenProcess 等待） |
-
-**退出码**：`0` = 无更新；`2` = 有更新 / 更新成功；`1` = 失败。
-
-## 3. 配置文件字段
+## 3. 配置文件
 
 ```json
 {
-  "repo": "your-name/your-app",
-  "asset_name": "your-app-windows-x64.zip",
+  "repo": "Luogoddes/openai-gemini",
+  "feed_name": "latest-version-windows-x64.json",
   "version_file": "version.txt",
   "install_dir": ".",
-  "exe_name": "your-app.exe"
+  "exe_name": "generic-updater.exe",
+  "variant": "portable",
+  "platform": "windows-x64",
+  "automatic_check_interval_hours": 24
 }
 ```
 
 | 字段 | 含义 |
 |---|---|
-| `repo` | GitHub 仓库 `owner/name` |
-| `asset_name` | 本平台资产文件名（`.zip` 目录包或 `.exe` 单文件） |
-| `version_file` | 本地版本号文件，一行 `v1.2.3` |
-| `install_dir` | 安装根目录，建议主程序传绝对路径 |
-| `exe_name` | 单 exe 场景的目标程序名；zip 包用于定位主程序 |
+| `repo` | Release 所在仓库 `owner/name` |
+| `feed_name` | 元数据资产名，按平台区分，见下节 |
+| `feed_url` | 可选。元数据直链或本地路径，覆盖默认的 Release 查找逻辑（本地测试用） |
+| `api_base` | 可选，默认 `https://api.github.com` |
+| `version_file` | 本地版本号文件，一行 `1.2.3` |
+| `install_dir` | 安装根目录，建议传绝对路径 |
+| `exe_name` | 安装后要拉起的程序名 |
+| `variant` | 用哪类包：`portable` / `online` / `offline` |
+| `platform` | 与元数据里的 `platform` 比对，防止装错平台 |
+| `automatic_check_interval_hours` | 自动检查最小间隔，默认 24 |
+| `state_file` | 可选，检查记录文件，默认 `<install_dir>/.app-update/state.json` |
 
-## 4. 和主程序怎么通信（跨语言契约）
+## 4. 元数据（feed）规范
 
-updater 启动后，**stdout 每行一条 JSON 状态帧**；主程序按行读取、解析后刷新自己的 UI：
+资产名沿用 snow-shot 的约定：
+
+| 资产 | 说明 |
+|---|---|
+| `latest-version-windows-x64.json` | Windows x64 元数据（本项目当前只发 Windows） |
+| `<product>-<version>-windows-x64-portable.zip` | 便携包 |
+| `<product>-<version>-windows-x64-portable.zip.sha256` | 旁置校验文件，`<hash>  <文件名>` |
+
+多平台时再加 `latest-version-windows-arm64.json`、`latest-version-macos-arm64.json` 等即可，客户端只认自己那份。
 
 ```json
-{"protocol":2,"type":"status","state":"Checking","version":"","notes":"","received":0,"total":0,"error":null}
-{"protocol":2,"type":"status","state":"Available","version":"1.5.7","notes":"### 新功能\n- ...","received":0,"total":0,"error":null}
-{"protocol":2,"type":"status","state":"Downloading","version":"1.5.7","notes":"...","received":1234567,"total":37764164,"error":null}
-{"protocol":2,"type":"status","state":"Verifying","version":"1.5.7","notes":"...","received":0,"total":0,"error":null}
-{"protocol":2,"type":"status","state":"Applying","version":"1.5.7","notes":"...","received":0,"total":0,"error":null}
-{"protocol":2,"type":"status","state":"Ready","version":"1.5.7","notes":"...","received":1,"total":1,"error":null}
-{"protocol":2,"type":"status","state":"Failed","version":"1.5.7","notes":"...","received":0,"total":0,"error":"失败原因"}
+{
+  "schema": 1,
+  "product": "generic-updater",
+  "version": "0.2.0",
+  "publishedAt": "2026-11-15T06:30:12Z",
+  "platform": "windows-x64",
+  "notes": "## 0.2.0\n\n- 新增 24h 自动检查\n- 新增下载进度与断点清理",
+  "packages": [
+    {
+      "variant": "portable",
+      "kind": "portable",
+      "path": "generic-updater-0.2.0-windows-x64-portable.zip",
+      "size": 408,
+      "sha256": "ec820637fe03c327b1c15468bb7cdf6f1565810270d3f3adbe69a0a79a46d777"
+    }
+  ]
+}
 ```
 
-| 字段 | 用途 |
-|---|---|
-| `state` | 状态机阶段：Checking/Available/Downloading/Verifying/Ready/Applying/Failed |
-| `version` | 检测到的新版本号 |
-| `notes` | 变更说明（Release body，markdown），主程序渲染到更新弹窗 |
-| `received` / `total` | 进度（下载阶段字节，安装阶段文件数） |
-| `error` | 失败原因，成功为 null |
+- `sha256` 必填且必须是 64 位十六进制，否则直接拒绝更新；
+- `size` 必填，下载时先比大小再比哈希；
+- `notes` 就是主程序弹窗里要展示的"本次变更内容"，Markdown 原文透传；
+- `path` 相对元数据所在目录解析，也可以给 `url` 字段写绝对直链；
+- `platform` / `product` 用于一致性校验。
 
-主程序侧只需要一个薄对接层：拉起进程 → 按行读 stdout JSON → 映射到自己的按钮/进度条/版本号/变更说明。
+与 snow-shot 的差别：对方把元数据做了 RSA-PSS 签名（`payload` + `keyId` + `signature`），并带逐文件清单支持增量更新；本项目当前只做 SHA256，签名和增量是后续扩展项。
 
-## 5. 主程序对接示例（任意语言伪代码）
+## 5. 状态帧协议
 
-```text
-1. 主程序用自身路径 API 拿到安装目录（Windows: GetModuleFileNameW）
-2. 写一份本软件的 app.json（repo / asset_name / install_dir / exe_name ...）
-3. 拉起 generic-updater.exe --update app.json --parent-pid <自己的PID>
-4. 读子进程 stdout 每行 JSON：
-   - Available  → 弹窗显示版本号 + notes，按钮"立即更新"
-   - Downloading→ 进度条 received/total
-   - Ready       → 更新完成，准备重启
-   - Failed      → 显示 error，可重试
+updater 往 stdout 每行写一条 JSON，主程序按行读：
+
+```json
+{"protocol":2,"type":"status","state":"Checking","version":"","notes":"","received":0,"total":0,"error":null,"automatic":true}
+{"protocol":2,"type":"status","state":"Available","version":"1.2.0","notes":"## v1.2.0 更新内容…","received":0,"total":0,"error":null,"automatic":true}
+{"protocol":2,"type":"status","state":"Downloading","version":"1.2.0","notes":"…","received":65536,"total":408,"error":null,"automatic":false}
+{"protocol":2,"type":"status","state":"Verifying","version":"1.2.0","notes":"…","received":0,"total":0,"error":null,"automatic":false}
+{"protocol":2,"type":"status","state":"Ready","version":"1.2.0","notes":"…","received":1,"total":1,"error":null,"automatic":false}
+{"protocol":2,"type":"status","state":"Applying","version":"1.2.0","notes":"…","received":0,"total":0,"error":null,"automatic":false}
+{"protocol":2,"type":"status","state":"Failed","version":"1.2.0","notes":"","received":0,"total":0,"error":"SHA256 不一致，下载文件已丢弃","automatic":false}
 ```
 
-## 6. 已实现 / 待扩展
+状态取值与 snow-shot 的 `UpdateState` 一致：`Unavailable / Idle / Checking / Available / Downloading / Verifying / Ready / Applying / Failed`。`automatic` 用来区分这次检查是自动还是手动，方便 UI 决定"静默失败"还是"弹错"。
 
-**已实现**
+## 6. 发布侧
 
-- GitHub Release latest 检查 + semver 比较
-- 流式下载到 `.part`，大小 + SHA256 校验，不符丢弃
-- zip / exe 两种资产；解压到 staging
-- 逐文件备份到 backup，覆盖安装；失败按备份回滚
-- 状态帧回传版本号、notes、进度、错误
-- 退出码约定；detached 拉起新版
+`.github/workflows/build.yml` 一条龙：打 `v*` tag（或手动触发）→ 在 `windows-latest` 编译 → 打包 portable zip → 算 SHA256 → 生成 `latest-version-windows-x64.json` → 全部挂到 Release。
 
-**待扩展（生产化时再补）**
+手工发版时照这个清单准备：
 
-- 元数据签名验签（RSA-PSS 或 ed25519，公钥内置；当前只做 SHA256）
-- Windows 挂起启动探测（CREATE_SUSPENDED 区分策略拦截 / 文件占用）
-- 启动标记文件确认新版真的起来，超时回滚
-- 断点续传（Range）、下载 stall 超时与退避重试
-- 目录不可写时的 UAC 提权
-- 多源兜底（站点 feed → GitHub）
+1. 改 `Cargo.toml` 的 `version`；
+2. 打 tag `v<version>` 并推送；
+3. 等 Actions 产出 `latest-version-windows-x64.json`、`*.zip`、`*.zip.sha256`。
 
-## 7. 发布侧配合
+## 7. 目录结构
 
-1. 打 tag `v1.2.3`；
-2. CI 编译主程序产物，打包 zip（或单 exe）；
-3. 计算 SHA256，生成 `SHA256SUMS.txt`；
-4. 上传到 GitHub Release，资产名与 `asset_name` 一致；
-5. 本地 `version.txt` 随包分发，记录当前版本号。
+```
+├── Cargo.toml
+├── config.example.json
+├── demo/                       # 纯前端测试台（node server.mjs）
+│   ├── index.html  app.js  styles.css  server.mjs
+│   └── feed/latest-version-windows-x64.json
+├── .github/workflows/build.yml
+└── src/
+    ├── main.rs                 # 命令行解析
+    ├── config.rs               # 配置、路径、本地版本号
+    ├── state.rs                # 24h 检查时间戳 + 待安装记录
+    ├── feed.rs                 # 元数据获取与解析
+    ├── download.rs             # 流式下载、SHA256、原子落地
+    ├── install.rs              # 解压 staging、备份覆盖、回滚、清理
+    ├── update.rs               # 状态机编排
+    ├── protocol.rs             # 与主程序的 JSON 帧
+    └── error.rs                # 统一错误类型（含可重试判定）
+```
+
+## 8. 已知边界
+
+- **替换旧 exe 靠重试**：Windows 上运行中的 exe 会被占用，`--apply` 会对"拒绝访问"重试到 90 秒截止，取代 OpenProcess 轮询（零额外依赖）。主程序应在调用前自行退出。
+- **不能自己更新自己**：`--apply` 要去覆盖的文件如果是正在运行的 updater 本身，会一直被占用。所以 `install_dir` / `exe_name` 必须指向被打包的那个 App；更新 updater 自身需要"复制一份到临时目录再执行"的做法（snow-shot 用独立的 broker/elevated 进程做这件事）。
+- **没有签名**：只校验 SHA256，元数据被篡改就能推任意包。生产环境建议按 snow-shot 的做法加 RSA-PSS 或 ed25519 验签。
+- **没有增量**：每次整包下载。
+- **UAC**：安装目录不可写时不会自动提权。

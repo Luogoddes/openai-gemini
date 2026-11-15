@@ -1,6 +1,8 @@
 name: build-windows-updater
 
-# 云端编译：本地不需要装 Rust，打 tag 或手动触发后由 GitHub Actions 在 Windows runner 上出 exe。
+# 云端编译：本地不需要装 Rust。打 tag 或手动触发后由 GitHub Actions 在 Windows runner
+# 上编译 exe，再打包 portable zip、算 SHA256、生成 latest-version-windows-x64.json，
+# 一并挂到 Release。客户端信任链就是"元数据里的 sha256 + 这个 zip"。
 on:
   push:
     tags: ["v*"]
@@ -60,7 +62,51 @@ jobs:
       - name: Build release
         run: cargo build --release --target x86_64-pc-windows-msvc
 
-      - name: Upload exe to Release
+      - name: Package portable zip, checksums and feed
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' |
+            Select-Object -First 1).Matches[0].Groups[1].Value
+          $product = "generic-updater"
+          $zipName = "$product-$version-windows-x64-portable.zip"
+
+          New-Item -ItemType Directory -Force "dist/payload" | Out-Null
+          Copy-Item "target/x86_64-pc-windows-msvc/release/generic-updater.exe" "dist/payload/generic-updater.exe"
+          Copy-Item "config.example.json" "dist/payload/config.example.json"
+          Set-Content -Path "dist/payload/version.txt" -Value $version -Encoding ascii
+
+          Compress-Archive -Path "dist/payload/*" -DestinationPath "dist/$zipName" -Force
+
+          $size = (Get-Item "dist/$zipName").Length
+          $sha = (Get-FileHash "dist/$zipName" -Algorithm SHA256).Hash.ToLower()
+          # snow-shot 风格的旁置校验文件，方便手工核对
+          Set-Content -Path "dist/$zipName.sha256" -Value "$sha  $zipName" -Encoding ascii
+
+          $notes = (git log -1 --pretty=%B).Trim()
+          $feed = [ordered]@{
+            schema      = 1
+            product     = $product
+            version     = $version
+            publishedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platform    = "windows-x64"
+            notes       = $notes
+            packages    = @(
+              [ordered]@{
+                variant = "portable"
+                kind    = "portable"
+                path    = $zipName
+                size    = $size
+                sha256  = $sha
+              }
+            )
+          }
+          $feed | ConvertTo-Json -Depth 6 | Set-Content -Path "dist/latest-version-windows-x64.json" -Encoding utf8
+
+          Get-ChildItem dist -File | Select-Object Name, Length
+
+      - name: Upload assets to Release
         uses: softprops/action-gh-release@v2
         with:
           # 显式指定 tag：workflow_dispatch 场景没有 tag 上下文，缺了这行就会报
@@ -68,5 +114,8 @@ jobs:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: ${{ steps.meta.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          files: target/x86_64-pc-windows-msvc/release/generic-updater.exe
+          files: |
+            dist/latest-version-windows-x64.json
+            dist/*.zip
+            dist/*.sha256
           fail_on_unmatched_files: true

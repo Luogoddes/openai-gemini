@@ -20,3 +20,16 @@ pub enum AppError {
     #[error("{0}")]
     Other(String),
 }
+
+impl AppError {
+    /// 目标文件被占用（旧进程还没退出）属于可重试错误。
+    pub fn is_transient(&self) -> bool {
+        match self {
+            AppError::Io(error) => matches!(
+                error.kind(),
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::WouldBlock
+            ),
+            _ => false,
+        }
+    }
+}

@@ -113,7 +113,6 @@ jobs:
           Copy-Item "dist\GuiUpdaterDemo.exe" "$payload\GuiUpdaterDemo.exe"
           Copy-Item "target\x86_64-pc-windows-msvc\release\generic-updater.exe" "$payload\generic-updater.exe"
           Set-Content -Path "$payload\version.txt" -Value $version -Encoding ascii
-          Set-Content -Path "$payload\README.txt" -Value "Generic Updater Demo $version`nRun GuiUpdaterDemo.exe; generic-updater.exe must stay in the same folder." -Encoding utf8
 
           New-Item -ItemType Directory -Force "build\out" | Out-Null
           Compress-Archive -Path "$payload\*" -DestinationPath "build\out\$zipName" -Force

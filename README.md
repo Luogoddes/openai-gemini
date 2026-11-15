@@ -8,6 +8,21 @@ RSA-PSS 元数据验签 / 备份替换 / 断电恢复 / UAC 提权 / 重启拉�
 [snow-shot 的 `snow-shot-updater`](https://gitee.com/mg-chao/snow-apps/tree/main/snow_shot/rust/snow-shot-updater)，
 代码是独立实现（对方的 `snow_shot/`、`snow-crates/` 是 GPL-3.0，只对齐接口，不复制实现）。
 
+## 0. 文档与复用
+
+| 文档 | 内容 |
+|---|---|
+| [docs/01-更新功能说明.md](docs/01-更新功能说明.md) | 架构、状态机、协议、签名、事务、边界 |
+| [docs/02-接入指南.md](docs/02-接入指南.md) | 一键脚手架、接入已有项目、发布/签名/排错清单 |
+| `tools/scaffold-update.ps1` | 一条命令把更新模块生成到新项目 |
+| [docs/skill/update-feature/SKILL.md](docs/skill/update-feature/SKILL.md) | 给 Agent 用的技能说明（可放进 DSH skills 目录） |
+
+新项目接入（在源仓库里执行）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\scaffold-update.ps1 `
+  -TargetDir D:\code\my-app -Repo "me/my-app" -ExeName "MyApp.exe" -Product "my-app"
+```
 ## 1. 组成
 
 | 目录 | 作用 |

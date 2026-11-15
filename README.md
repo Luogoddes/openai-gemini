@@ -102,6 +102,24 @@ generic-updater.exe --check -c test.json    # 调试：覆盖内置配置
 信封：`{"schema":1,"keyId":"...","payload":"<base64>","signature":"<base64>"}`，
 签名对象是 payload 的原始 UTF-8 字节，RSA-PSS + SHA-256 + salt 32，密钥 3072 位。
 
+### 密钥只需要配置一次
+
+密钥是**一次性投入**，之后每次发版都不用再碰：
+
+| 东西 | 存在哪 | 多久动一次 |
+|---|---|---|
+| 私钥 | GitHub Secret `UPDATE_SIGNING_KEY` | 生成时配置一次，之后不动 |
+| 公钥 | `resources/update-trusted-keys.json`（编译进 exe） | 生成时提交一次，之后不动 |
+| 发布流程 | 改 `CHANGELOG.md` → 打 tag → push | 每次发版 |
+
+CI 每次都从同一个 secret 读私钥、用同一把公钥对应的 keyId 签名，所以**不需要每次上传重新配置**。
+
+几条纪律：
+
+- **私钥要备份**：客户端里烧的是公钥，私钥丢了就再也签不出老客户端认的包；
+- **不要随手换密钥**：旧客户端只认旧公钥，换了就收不到更新；
+- 要轮换时：先往 `resources/update-trusted-keys.json` 的 `keys` 数组里**追加**新公钥（新 `id`），
+  发一个用新 keyId 签名的过渡版本，等用户升上来后再移除旧公钥。
 **没配 secret 的时候 feed 就是明文 JSON**——这是默认状态，不是坏了。开启签名要四步：
 
 ```powershell
@@ -163,6 +181,8 @@ cargo test                            # 15 个单测（含签名、journal、文
 - **没有 Authenticode 证书**：SmartScreen 仍提示未知发布者；元数据签名不等于代码签名。
 - **断电恢复依赖 journal 落盘**：极端情况（journal 写一半断电）仍需 `--clean`。
 - **平台**：Windows x64 已实测；其他平台只有裸编译路径。
+
+
 
 
 

@@ -1,8 +1,11 @@
 mod config;
+mod contract;
 mod download;
 mod error;
 mod feed;
 mod install;
+mod journal;
+mod platform;
 mod protocol;
 mod state;
 mod update;
@@ -17,11 +20,13 @@ const USAGE: &str = "\
   --check [--auto]   检查更新；--auto 时受 automatic_check_interval_hours 约束
   --download         检查 + 下载 + 校验 + 解压暂存（停在 Ready）
   --apply            应用已下载的更新：备份、覆盖、清理、拉起新版
+  --recover          只做事务恢复（上次安装中途崩溃时按备份回滚）
   --clean            清掉下载缓存与暂存目录
 
 选项:
-  --parent-pid <pid> 主程序 PID（保留，当前用文件占用重试代替）
+  --parent-pid <pid> 主程序 PID，安装前精确等待它退出
   -c, --config <path> 配置文件路径
+  --elevated         内部参数：本进程由 UAC 提权拉起
 ";
 
 fn main() {
@@ -42,7 +47,9 @@ fn main() {
             }
             "--download" | "--update" => mode = Some(Mode::Download),
             "--apply" => mode = Some(Mode::Apply { parent_pid: None }),
+            "--recover" => mode = Some(Mode::Recover),
             "--clean" => mode = Some(Mode::Clean),
+            "--elevated" => {}
             "--parent-pid" => {
                 i += 1;
                 parent_pid = args.get(i).and_then(|value| value.parse().ok());
@@ -87,7 +94,7 @@ fn main() {
         }
     };
 
-    match update::run(&cfg, mode) {
+    match update::run(&cfg, mode, &args) {
         Ok(code) => std::process::exit(code),
         Err(error) => {
             eprintln!("{error}");

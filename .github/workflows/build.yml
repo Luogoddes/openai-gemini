@@ -1,7 +1,7 @@
 name: build-windows-release
 
-# 一条龙：编译 Rust 更新器 + C++ GUI 客户端 → 打包 zip → 出 SHA256 与 feed 元数据 → 挂到 Release。
-# 打 v* tag 或手动触发都会跑，产物可以被客户端直接消费，用于真实链路测试。
+# 一条龙：编译 Rust 更新器 + C++ GUI 客户端 → 打包 zip → 出 SHA256 与（可选签名）feed
+# → 挂到 Release。打 v* tag 或手动触发都会跑，产物可被客户端直接消费做真实升级测试。
 on:
   push:
     tags: ["v*"]
@@ -14,6 +14,10 @@ on:
 
 permissions:
   contents: write
+
+env:
+  # 配了 secret 就签元数据，客户端 require_signature 也会自动切成 true；没配就是未签名演示模式。
+  UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
 
 jobs:
   build-windows:
@@ -74,14 +78,19 @@ jobs:
             Select-Object -First 1).Matches[0].Groups[1].Value
           $product = "generic-updater"
           $zipName = "$product-$version-windows-x64-portable.zip"
+          $signed = -not [string]::IsNullOrWhiteSpace($env:UPDATE_SIGNING_KEY)
 
           $payload = "build\payload"
           New-Item -ItemType Directory -Force $payload | Out-Null
           Copy-Item "dist\GuiUpdaterDemo.exe" "$payload\GuiUpdaterDemo.exe"
           Copy-Item "target\x86_64-pc-windows-msvc\release\generic-updater.exe" "$payload\generic-updater.exe"
-          Copy-Item "app\app.ini" "$payload\app.ini"
           Set-Content -Path "$payload\version.txt" -Value $version -Encoding ascii
           Set-Content -Path "$payload\README.txt" -Value "Generic Updater Demo $version`nRun GuiUpdaterDemo.exe; generic-updater.exe must stay in the same folder." -Encoding utf8
+
+          # 打包进 zip 的 app.ini 决定客户端是否强制要求签名，必须和本次发布是否签名一致。
+          $requireSignature = if ($signed) { "true" } else { "false" }
+          (Get-Content app\app.ini -Raw) -replace '(?m)^require_signature=.*$', "require_signature=$requireSignature" |
+            Set-Content -Path "$payload\app.ini" -Encoding utf8
 
           New-Item -ItemType Directory -Force "build\out" | Out-Null
           Compress-Archive -Path "$payload\*" -DestinationPath "build\out\$zipName" -Force
@@ -111,7 +120,21 @@ jobs:
           }
           $feed | ConvertTo-Json -Depth 6 | Set-Content -Path "build\out\latest-version-windows-x64.json" -Encoding utf8
 
+          "signed=$signed require_signature=$requireSignature"
           Get-ChildItem build\out | Select-Object Name, Length
+
+      - name: Sign update metadata (RSA-PSS)
+        if: ${{ env.UPDATE_SIGNING_KEY != '' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $keyPath = Join-Path $env:RUNNER_TEMP "update-signing.pem"
+          [IO.File]::WriteAllText($keyPath, $env:UPDATE_SIGNING_KEY, [Text.UTF8Encoding]::new($false))
+          ./tools/sign-feed.ps1 `
+            -FeedPath build/out/latest-version-windows-x64.json `
+            -PrivateKeyPath $keyPath `
+            -PublicKeysPath resources/update-trusted-keys.json
+          Remove-Item $keyPath -Force
 
       - name: Upload assets to Release
         uses: softprops/action-gh-release@v2

@@ -78,6 +78,7 @@ struct AppConfig {
   std::wstring variant = L"portable";
   std::wstring platform = L"windows-x64";
   int intervalHours = 24;
+  bool requireSignature = false;
 };
 
 struct AppState {
@@ -270,6 +271,7 @@ void LoadConfig() {
   std::wstring interval = IniValue(text, L"interval_hours", L"24");
   gConfig.intervalHours = _wtoi(interval.c_str());
   if (gConfig.intervalHours <= 0) gConfig.intervalHours = 24;
+  gConfig.requireSignature = IniValue(text, L"require_signature", L"false") == L"true";
 }
 
 std::wstring JsonEscape(const std::wstring& text) {
@@ -295,6 +297,7 @@ bool WriteUpdaterConfig() {
   json += L"  \"exe_name\": \"" + JsonEscape(gConfig.exeName) + L"\",\n";
   json += L"  \"variant\": \"" + JsonEscape(gConfig.variant) + L"\",\n";
   json += L"  \"platform\": \"" + JsonEscape(gConfig.platform) + L"\",\n";
+  json += L"  \"require_signature\": " + std::wstring(gConfig.requireSignature ? L"true" : L"false") + L",\n";
   json += L"  \"automatic_check_interval_hours\": " + std::to_wstring(gConfig.intervalHours) + L"\n";
   json += L"}\n";
   return WriteTextFile(gState.configPath, json);
@@ -321,7 +324,9 @@ void HandleFrame(const std::string& line, CaptureContext* context) {
     unsigned long long total = JsonNumber(line, "total");
     WPARAM percent = 0;
     if (total > 0) percent = (WPARAM)((received * 100) / total);
-    PostMessageW(context->hwnd, WM_APP_PROGRESS, percent, (LPARAM)received);
+    if (context->hwnd) {
+      PostMessageW(context->hwnd, WM_APP_PROGRESS, percent, (LPARAM)received);
+    }
     context->result.size = total;
     return;
   }
@@ -715,6 +720,20 @@ std::wstring ExecutablePath() {
   return std::wstring(buffer, length);
 }
 
+// 更新器在 Reapply 后等这个标记文件来确认"新版真的起来了"，超时会回滚。
+void SignalStarted() {
+  std::wstring directory = gState.baseDir + L"\\.app-update";
+  CreateDirectoryW(directory.c_str(), nullptr);
+  WriteTextFile(directory + L"\\started.flag", L"started");
+}
+
+// 启动时先把上次可能中断的安装事务恢复掉，再谈检查更新。
+void RunRecovery() {
+  CaptureContext context;
+  context.hwnd = nullptr;
+  RunUpdaterCapture(L"--recover " + Quote(gState.configPath), &context);
+}
+
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
@@ -776,6 +795,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 
   ShowWindow(window, showCommand);
   UpdateWindow(window);
+  // 先告诉更新器「新版起来了」，它才会退出并释放被改名的旧镜像，
+  // 后面的 RunRecovery 才能在重试窗口内把 `*.old-*` 删掉。
+  SignalStarted();
+  RunRecovery();
 
   MSG message = {};
   while (GetMessageW(&message, nullptr, 0, 0) > 0) {

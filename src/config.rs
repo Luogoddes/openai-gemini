@@ -55,6 +55,9 @@ pub struct Config {
     /// 自动检查状态文件；留空则放在安装目录的 `.app-update/state.json`
     #[serde(default)]
     pub state_file: Option<String>,
+    /// 是否强制要求元数据带签名信封（生产建议 true；本地明文测试设 false）
+    #[serde(default)]
+    pub require_signature: bool,
 }
 
 impl Config {

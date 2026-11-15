@@ -165,14 +165,16 @@ pub fn resolve(
 ) -> Result<Feed, AppError> {
     if let Some(feed_url) = cfg.feed_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         return if feed_url.starts_with("http://") || feed_url.starts_with("https://") {
-            let text = http_text(client, feed_url)?;
+            let raw = http_text(client, feed_url)?;
+            let text = crate::contract::unwrap_feed(&raw, cfg.require_signature)?;
             let mut feed = parse(&text, cfg)?;
             feed.base = Base::Remote(remote_base(feed_url));
             Ok(feed)
         } else {
             let path = PathBuf::from(feed_url);
-            let text = std::fs::read_to_string(&path)
+            let raw = std::fs::read_to_string(&path)
                 .map_err(|e| AppError::Config(format!("读取元数据失败 {feed_url}: {e}")))?;
+            let text = crate::contract::unwrap_feed(&raw, cfg.require_signature)?;
             let mut feed = parse(&text, cfg)?;
             feed.base = Base::Local(
                 path.parent()
@@ -217,7 +219,8 @@ pub fn resolve(
         })?
         .to_string();
 
-    let text = http_text(client, &url)?;
+    let raw = http_text(client, &url)?;
+    let text = crate::contract::unwrap_feed(&raw, cfg.require_signature)?;
     let mut feed = parse(&text, cfg)?;
     feed.base = Base::Remote(remote_base(&url));
     Ok(feed)
@@ -240,6 +243,7 @@ mod tests {
             platform: "windows-x64".to_string(),
             automatic_check_interval_hours: 24,
             state_file: None,
+            require_signature: false,
         }
     }
 

@@ -2,9 +2,9 @@
 
 外置通用更新器 + 一个仿「版本更新」弹窗的 Win32 客户端。任意语言的主程序拉起
 `generic-updater.exe` 就能获得：**24h 自动检查 / 手动检查 / 下载进度 / SHA256 校验 /
-备份替换 / 失败回滚 / 重启拉起**。
+RSA-PSS 元数据验签 / 备份替换 / 断电恢复 / UAC 提权 / 重启拉起 / 启动探测与回滚**。
 
-更新契约（元数据形状、资产命名、状态机、stdout JSON 帧）参考了
+更新契约（元数据形状、资产命名、状态机、stdout JSON 帧、签名信封）参考了
 [snow-shot 的 `snow-shot-updater`](https://gitee.com/mg-chao/snow-apps/tree/main/snow_shot/rust/snow-shot-updater)，
 代码是独立实现（对方的 `snow_shot/`、`snow-crates/` 是 GPL-3.0，只对齐接口，不复制实现）。
 
@@ -12,80 +12,62 @@
 
 | 目录 | 作用 |
 |---|---|
-| `src/` | Rust 更新器：检查、下载、校验、安装、回滚、拉起 |
+| `src/` | Rust 更新器：检查、验签、下载、校验、事务安装、回滚、提权、拉起、探测 |
 | `app/` | C++ Win32 GUI 客户端：版本弹窗 + 进度条 + 立即安装 / 跳过此版本 / 重启软件 |
 | `demo/` | 纯前端测试台，不开编译器也能把流程点一遍 |
-| `.github/workflows/build.yml` | 编译两端 → 打包 zip → 出 `.sha256` 与 `latest-version-windows-x64.json` |
+| `tools/` | 密钥生成与元数据签名脚本 |
+| `.github/workflows/build.yml` | 编译两端 → 打包 zip → 出 `.sha256` 与 feed（配了 secret 就签名） |
 
-GUI 只做 UI 和进程协调，真正的网络与文件操作全部交给 Rust 更新器，两者用 stdout
-一行一条 JSON 通信。**「重启软件」是真的重启**：客户端先拉起 `--apply`，然后自己退出，
-更新器在 exe 释放后替换文件、清缓存，再以 detached 方式重新拉起新版——浏览器版做不到这一点，
-所以最终形态是原生窗口。
+GUI 只做 UI 和进程协调，网络与文件操作全部交给 Rust 更新器，两者用 stdout 一行一条 JSON 通信。
+「重启软件」是真的重启：客户端先拉起 `--apply` 再退出，更新器替换文件、清缓存，detached 拉起新版，
+并等客户端写 `started.flag` 确认启动成功，超时自动回滚。
 
 ## 2. 最快的体验方式
 
-### 2.1 浏览器测试台（不装任何工具链）
+### 2.1 浏览器测试台（不装工具链）
 
 ```powershell
 cd demo
 node server.mjs      # 打开 http://127.0.0.1:8124/
 ```
 
-自动检查 → 立即更新（真实算 SHA256）→ 重启软件（模拟备份/覆盖/清理）→ 24h 节流验证，
-右侧实时打印和 Rust 版一样的 JSON 帧。
+自动检查 → 立即更新（真实算 SHA256）→ 重启软件（模拟备份/覆盖/清理）→ 24h 节流验证。
 
-> 本机安全软件会拦截 URL 以 `.zip` 结尾的浏览器请求（回 204 空响应），所以 demo 走
-> `/feed/portable` 无扩展名路由；真实更新器用 reqwest，不受影响。
+### 2.2 真实链路（GitHub Actions）
 
-### 2.2 真实链路（GitHub Actions，推荐）
-
-1. 改 `Cargo.toml` 的 `version`，push，然后打 tag：
-
-   ```powershell
-   git tag v0.3.0; git push origin v0.3.0
-   ```
-
-2. Actions 跑完后，Release `v0.3.0` 会有三个资产：
-   `generic-updater-0.3.0-windows-x64-portable.zip`、同名 `.sha256`、`latest-version-windows-x64.json`。
-
-3. 下载 zip 解压，运行 `GuiUpdaterDemo.exe`：首次打开会自动检查一次（24h 内不会重复）。
-   因为版本相同，会显示「当前已是最新版本」。
-
-4. 想看到更新：把 `Cargo.toml` 改成 `0.3.1` 并打 `v0.3.1` tag。等 CI 出包后，
-   在旧版窗口里点 **检查更新**（手动检查无视 24h 限制）→ 出现「最新版本 0.3.1（有更新）」+
-   更新日志 + 包大小 → **立即安装** → 进度条走满 → **重启软件** → 窗口自动变成 0.3.1。
+1. 改 `Cargo.toml` 的 `version`，push，打 tag：`git tag v0.4.0; git push origin v0.4.0`
+2. Actions 产出：`generic-updater-0.4.0-windows-x64-portable.zip`、同名 `.sha256`、`latest-version-windows-x64.json`
+3. 下载解压运行 `GuiUpdaterDemo.exe`：首次自动检查（24h 内不重复），版本相同显示「当前已是最新版本」
+4. 把 `Cargo.toml` 改成 `0.4.1` 打 `v0.4.1` tag，回到旧窗口点 **检查更新**（手动无视 24h）→ 出现新版 +
+   更新日志 + 大小 → **立即安装** → **重启软件** → 窗口自动变成 0.4.1
 
 ### 2.3 本地编译
 
 ```powershell
-# Rust 更新器
 cargo build --release            # target\release\generic-updater.exe
 
-# GUI 客户端（二选一）
-set MSVC_SETUP=E:\你的路径\msvc\setup_x64.bat
-app\build-msvc.bat               # 产物在 dist\GuiUpdaterDemo.exe
+set MSVC_SETUP=E:\打包\NuitkaGUI\msvc\setup_x64.bat
+app\build-msvc.bat               # dist\GuiUpdaterDemo.exe
 
-app\build-mingw.bat              # 有全局 g++ 时可用；会在仓库根目录里用相对路径编译
+app\build-mingw.bat              # 有全局 g++ 时（脚本会 cd 到仓库根用相对路径，避开中文路径）
 ```
-
-`setup_x64.bat` 就是准备 vcvars 环境的脚本（你本地那套 Nuitka 自带 MSVC 的入口），
-`build-msvc.bat` 只负责调 `cl`。
 
 ## 3. 命令行
 
 ```powershell
 generic-updater.exe --check --auto app.json    # 启动时自动检查（受 24h 间隔约束）
 generic-updater.exe --check app.json           # 手动检查（无视间隔）
-generic-updater.exe --download app.json        # 下载 + 校验 + 解压暂存，停在 Ready
-generic-updater.exe --apply app.json           # 应用：备份→覆盖→清理→拉起
+generic-updater.exe --download app.json        # 下载 + 验签 + 校验 + 解压暂存，停在 Ready
+generic-updater.exe --apply app.json           # 备份→覆盖→清理→拉起→启动探测
+generic-updater.exe --recover app.json         # 只做事务恢复（上次中断时按备份回滚）
 generic-updater.exe --clean app.json           # 清缓存
 ```
 
 退出码：`0` 无更新 / `2` 有更新·已就绪·更新成功 / `1` 失败。
 
-## 4. 配置文件
+## 4. 配置
 
-GUI 读同目录的 `app.ini`，再翻译成更新器要的 `updater.json`：
+GUI 读同目录 `app.ini`，翻译成更新器的 `updater.json`：
 
 ```ini
 repo=Luogoddes/openai-gemini
@@ -96,103 +78,131 @@ homepage=https://github.com/Luogoddes/openai-gemini
 variant=portable
 platform=windows-x64
 interval_hours=24
+require_signature=false         # 生产建议 true，配合下面的签名流程
 ```
 
-更新器侧的 `updater.json` 字段：
+## 5. 签名（RSA-PSS，与 snow-shot 同构）
 
-| 字段 | 含义 |
-|---|---|
-| `repo` | Release 所在仓库 `owner/name` |
-| `feed_name` | 元数据资产名 |
-| `feed_url` | 元数据直链或本地路径（覆盖 Release 查找） |
-| `api_base` | 默认 `https://api.github.com` |
-| `version_file` | 本地版本号文件，一行 `1.2.3` |
-| `install_dir` | 安装根目录 |
-| `exe_name` | 安装后要拉起的程序 |
-| `variant` / `platform` | 选包与平台校验 |
-| `automatic_check_interval_hours` | 自动检查最小间隔，默认 24 |
-| `state_file` | 可选，默认 `<install_dir>/.app-update/state.json` |
+格式：`{"schema":1,"keyId":"...","payload":"<base64>","signature":"<base64>"}`，
+签名对象是 payload JSON 的**原始 UTF-8 字节**，算法 RSA-PSS + SHA-256 + salt 32，密钥 3072 位。
+公钥编译进 `generic-updater.exe`（`resources/update-trusted-keys.json`），私钥只在发布机器上。
 
-## 5. 元数据（feed）规范
+**snow-shot 的做法**（我照着对齐的）：
+
+1. `scripts/new-snow-shot-release-key.ps1` 生成 3072 位 RSA，私钥 PKCS#8 PEM 写到仓库外的空目录并锁 ACL；
+   公钥以 `{id, modulus(base64), exponent(base64)}` 写进 `snow_shot/resources/update-trusted-keys.json` 并提交。
+2. 发布脚本 `publish-snow-shot-release.ps1` 组装 payload（schema/product/version/publishedAt/platform/packages，
+   非安装器包还带 `files` 逐文件清单），用 .NET `RSA.SignData(..., SHA256, PSS)` 签，
+   再 `VerifyData` 自验，输出紧凑信封。
+3. 签名前会校验「私钥 modulus/exponent 必须匹配已嵌入的公钥」，且 `KeySize == 3072`。
+4. PSS 的 salt 是随机的，所以重复发布同一版本时会复用线上已有的信封（版本 + 包清单一致才允许），保证幂等。
+5. 上传前用编译好的 updater 跑 `--audit-release`，把签名、压缩包、启动探测全验一遍才发。
+
+**本项目的步骤**：
+
+```powershell
+# 1) 生成密钥（私钥放仓库外！公钥写进仓库）
+powershell -File tools/new-release-key.ps1 `
+  -PrivateKeyPath D:\keys\update-signing.pem `
+  -PublicKeysPath resources/update-trusted-keys.json `
+  -KeyId generic-updater-2026-01
+
+# 2) 把私钥内容放进 GitHub Secret：UPDATE_SIGNING_KEY
+# 3) 提交公钥文件后重新构建客户端（公钥会被编译进去）
+# 4) 打 tag 发布：workflow 检测到 secret 会自动签名，并把 zip 里的 require_signature 改成 true
+```
+
+客户端校验失败会直接拒绝更新：`校验失败: 元数据签名无效（内容被改过或私钥不对）`。
+
+## 6. 元数据（feed）规范
 
 | 资产 | 说明 |
 |---|---|
-| `latest-version-windows-x64.json` | Windows x64 元数据 |
+| `latest-version-windows-x64.json` | 元数据（签名信封或明文） |
 | `<product>-<version>-windows-x64-portable.zip` | 便携包 |
 | `<product>-<version>-windows-x64-portable.zip.sha256` | 旁置校验，`<hash>  <文件名>` |
+
+payload（验签后）结构：
 
 ```json
 {
   "schema": 1,
   "product": "generic-updater",
-  "version": "0.3.0",
-  "publishedAt": "2026-11-15T09:20:00Z",
+  "version": "0.4.0",
+  "publishedAt": "2026-11-15T10:00:00Z",
   "platform": "windows-x64",
-  "notes": "- 新增：版本更新窗口\n- 新增：下载进度与 SHA256 校验",
+  "notes": "- 新增：签名校验\n- 新增：断电恢复",
   "packages": [
     {
       "variant": "portable",
       "kind": "portable",
-      "path": "generic-updater-0.3.0-windows-x64-portable.zip",
-      "size": 1180275,
+      "path": "generic-updater-0.4.0-windows-x64-portable.zip",
+      "size": 1209805,
       "sha256": "b0b7…"
     }
   ]
 }
 ```
 
-- `sha256` 必填且 64 位十六进制，否则拒绝更新；`size` 必填，先比大小再比哈希；
-- `notes` 就是弹窗里的「更新日志」，Markdown 原文透传；
-- `path` 相对元数据所在目录解析，也可用 `url` 写绝对直链；
-- 多平台再加 `latest-version-windows-arm64.json` 等，客户端只认自己那份。
+## 7. 状态帧协议
 
-## 6. 状态帧协议
-
-stdout 一行一条 JSON，GUI 按行解析：
+stdout 一行一条 JSON：
 
 ```json
-{"protocol":2,"type":"status","state":"Checking","version":"","notes":"","received":0,"total":0,"error":null,"automatic":true}
-{"protocol":2,"type":"status","state":"Available","version":"0.3.1","notes":"…","received":0,"total":1180275,"error":null,"automatic":false}
-{"protocol":2,"type":"status","state":"Downloading","version":"0.3.1","notes":"…","received":65536,"total":1180275,"error":null,"automatic":false}
-{"protocol":2,"type":"status","state":"Verifying","version":"0.3.1","notes":"…","received":0,"total":0,"error":null,"automatic":false}
-{"protocol":2,"type":"status","state":"Ready","version":"0.3.1","notes":"…","received":1,"total":1,"error":null,"automatic":false}
-{"protocol":2,"type":"status","state":"Applying","version":"0.3.1","notes":"…","received":0,"total":0,"error":null,"automatic":false}
-{"protocol":2,"type":"status","state":"Failed","version":"0.3.1","notes":"","received":0,"total":0,"error":"SHA256 不一致，下载文件已丢弃","automatic":false}
+{"protocol":2,"type":"status","state":"Available","version":"0.4.1","notes":"…","received":0,"total":1209805,"error":null,"automatic":false}
+{"protocol":2,"type":"status","state":"Downloading","version":"0.4.1","notes":"…","received":65536,"total":1209805,"error":null,"automatic":false}
+{"protocol":2,"type":"status","state":"Ready","version":"0.4.1","notes":"…","received":1,"total":1,"error":null,"automatic":false}
+{"protocol":2,"type":"status","state":"Failed","version":"0.4.1","notes":"","received":0,"total":0,"error":"元数据签名无效（内容被改过或私钥不对）","automatic":false}
 ```
 
-状态与 snow-shot 的 `UpdateState` 一致：`Unavailable / Idle / Checking / Available /
-Downloading / Verifying / Ready / Applying / Failed`。`automatic` 用来区分自动/手动检查，
-方便 UI 决定静默失败还是弹错。
+状态与 snow-shot 的 `UpdateState` 一致，`automatic` 区分自动/手动检查。
 
-## 7. 目录结构
+## 8. 安装事务、进程协调与权限
+
+| 能力 | 做法 |
+|---|---|
+| 24h 自动检查 | 时间戳存 `.app-update/state.json`，检查失败不刷新 |
+| 等待旧进程 | `OpenProcess + WaitForSingleObject`，拿不到句柄视为已退出；另有文件占用重试兜底 |
+| 断电恢复 | 覆盖前写 `journal.json`（目标 + 备份），装完标 `committed`；启动时 `--recover` 按未提交事务还原 |
+| 失败回滚 | 备份目录 + 回滚 + 启动探测超时回滚（30s 内没等到 `started.flag` 或子进程提前退出） |
+| UAC 提权 | 安装目录不可写且未提权时，`ShellExecuteW("runas")` 重启自身（带 `--elevated`） |
+| 自更新 | 运行中的 `generic-updater.exe` 不能覆盖：先改名成 `*.old-<pid>` 再写新文件，下次启动清理 |
+| 清理 | 成功后删 staging/backup/zip、旧镜像，缓存目录只留 `state.json`（检查时间戳） |
+
+## 9. 已知边界
+
+- **不支持增量**：每次整包下载（snow-shot 的 `files` 清单可做逐文件增量，这里没实现）。
+- **没有代码签名证书**：SmartScreen 仍会提示未知发布者；要彻底消除需要 Authenticode（EV 证书）。
+- **提权只覆盖"目录不可写"**：安装到用户目录时不会弹 UAC。
+- **断电恢复依赖 journal 落盘**：极端情况下（journal 写了一半就断电）仍可能残留，需要手动 `--clean`。
+- **平台**：Windows x64 已实测；Linux/macOS 只有裸编译路径，没有安装器。
+
+## 10. 目录结构
 
 ```
 ├── Cargo.toml
-├── config.example.json
 ├── app/
-│   ├── src/gui.cpp          # Win32 界面 + 进程协调
-│   ├── app.ini              # 客户端配置
+│   ├── src/gui.cpp          # Win32 界面 + 进程协调 + started.flag
+│   ├── app.ini
 │   ├── build-msvc.bat
 │   └── build-mingw.bat
 ├── demo/                    # 浏览器测试台
+├── resources/update-trusted-keys.json
+├── tools/
+│   ├── new-release-key.ps1
+│   └── sign-feed.ps1
 ├── .github/workflows/build.yml
 └── src/
     ├── main.rs              # 命令行
     ├── config.rs            # 配置与本地版本号
     ├── state.rs             # 24h 时间戳 + 待安装记录
-    ├── feed.rs              # 元数据获取与解析
+    ├── contract.rs          # 签名信封校验（RSA-PSS）
+    ├── journal.rs           # 事务日志与恢复
+    ├── platform.rs          # 进程等待、UAC、可写探测、重试
+    ├── feed.rs              # 元数据获取、验签、解析
     ├── download.rs          # 流式下载、SHA256、原子落地
-    ├── install.rs           # 解压、备份覆盖、回滚、清理
+    ├── install.rs           # 解压、备份覆盖、自更新改名、回滚、清理
     ├── update.rs            # 状态机编排
     ├── protocol.rs          # JSON 帧
     └── error.rs
 ```
-
-## 8. 已知边界
-
-- **不能更新自己**：`--apply` 会跳过正在运行的 `generic-updater.exe`（Windows 锁镜像）。
-  客户端自身升级要「复制到临时目录再由副本替换」，snow-shot 用 broker/elevated 做的就是这个。
-- **没有签名**：只校验 SHA256，元数据被篡改就能推任意包；snow-shot 用 RSA-PSS 信封防护。
-- **没有增量**：整包下载。对方的 `files` 清单可以做逐文件增量。
-- **占用重试**：运行中的 exe 靠「拒绝访问重试 90 秒」处理，不是 OpenProcess 精确等待。
-- **UAC**：安装目录不可写时不会自动提权。

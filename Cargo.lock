@@ -3,6 +3,15 @@
 version = 4
 
 [[package]]
+name = "GuiUpdaterDemo"
+version = "0.6.0"
+dependencies = [
+ "build-common",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -61,6 +70,10 @@ checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
 ]
+
+[[package]]
+name = "build-common"
+version = "0.1.0"
 
 [[package]]
 name = "bumpalo"
@@ -294,6 +307,7 @@ name = "generic-updater"
 version = "0.6.0"
 dependencies = [
  "base64 0.22.1",
+ "build-common",
  "hex",
  "rand 0.8.8",
  "reqwest",

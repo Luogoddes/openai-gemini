@@ -27,8 +27,7 @@ description: 给 Windows 桌面项目接入本仓库的自动更新能力（签�
    ```
 
 2. **验证编译**：
-   - `cargo build --release`
-   - `set MSVC_SETUP=<msvc setup_x64.bat>` 后 `client\build-msvc.bat`
+   - `cargo build --release --workspace`
 
 3. **改 `updater.conf`**：repo / exe_name / product / homepage / window_title /
    interval_hours / startup_check_delay_seconds。

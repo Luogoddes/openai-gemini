@@ -62,5 +62,11 @@ fn main() {
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     fs::write(out_dir.join("embedded_config.rs"), generate).unwrap();
+
+    // PE 身份资源：VERSIONINFO / 图标 / 清单。版本号跟随 RELEASE_VERSION 或 Cargo.toml。
+    let resources = manifest_dir.join("resources");
+    println!("cargo:rerun-if-changed={}", resources.join("app.ico").display());
+    println!("cargo:rerun-if-changed={}", resources.join("updater.manifest").display());
+    build_common::compile_rc(&resources.join("updater.rc"));
 }
 

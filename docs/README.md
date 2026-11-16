@@ -16,8 +16,7 @@ powershell -ExecutionPolicy Bypass -File scripts\scaffold-update.ps1 `
 
 # 目标项目里验证
 cd D:\code\my-app
-cargo build --release
-client\build-msvc.bat
+cargo build --release --workspace
 
 # 发版
 git tag v0.1.0; git push origin v0.1.0

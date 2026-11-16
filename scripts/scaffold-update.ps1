@@ -58,12 +58,12 @@ function Copy-Tree([string]$relative) {
 Write-Output "source: $source"
 Write-Output "target: $target"
 
-foreach ($relative in @('Cargo.toml', 'Cargo.lock', 'build.rs', 'src', 'resources', 'client', 'scripts', 'docs')) {
+foreach ($relative in @('Cargo.toml', 'Cargo.lock', 'build.rs', 'build-common', 'demo-app', 'src', 'resources', 'scripts', 'docs')) {
     Copy-Tree $relative
 }
 
 # Generated build artifacts and review archives must not be shipped.
-foreach ($junk in @('client\build-config.h', 'dist', 'build', 'docs\reviews')) {
+foreach ($junk in @('dist', 'build', 'docs\reviews')) {
     $path = Join-Path $target $junk
     if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
 }
@@ -113,9 +113,7 @@ $readme = @(
     '',
     '## Build',
     '',
-    '    cargo build --release',
-    '    set MSVC_SETUP=<your msvc setup_x64.bat>',
-    '    client\build-msvc.bat',
+    '    cargo build --release --workspace',
     '',
     '## Release',
     '',
@@ -139,7 +137,6 @@ Write-Output 'Created:'
 Get-ChildItem -LiteralPath $target -Force | Select-Object -ExpandProperty Name | ForEach-Object { Write-Output "  $_" }
 Write-Output ''
 Write-Output 'Next:'
-Write-Output '  1) cargo build --release'
-Write-Output '  2) client\build-msvc.bat (set MSVC_SETUP first)'
-Write-Output '  3) edit CHANGELOG.md, tag, push, wait for CI'
-Write-Output '  4) optional: scripts/new-release-key.ps1 + UPDATE_SIGNING_KEY + require_signature=true'
+Write-Output '  1) cargo build --release --workspace'
+Write-Output '  2) edit CHANGELOG.md, tag, push, wait for CI'
+Write-Output '  3) optional: scripts/new-release-key.ps1 + UPDATE_SIGNING_KEY + require_signature=true'

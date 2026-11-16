@@ -1,6 +1,6 @@
 name: build-windows-release
 
-# 一条龙：编译 Rust 更新器 + C++ GUI → 打包 zip → 出 SHA256 与（可选签名）feed
+# 一条龙：编译 Rust 更新器 + Rust GUI 客户端 → 打包 zip → 出 SHA256 与（可选签名）feed
 # → 按 CHANGELOG 抽发布说明 → 挂到 Release。
 on:
   push:
@@ -122,14 +122,11 @@ jobs:
             }
           }
 
-      - name: Build updater (Rust)
-        run: cargo build --release --target ${{ steps.conf.outputs.triple }}
-
-      - name: Build GUI client (C++)
-        shell: cmd
+      # RELEASE_VERSION 同时喂给两个 crate 的 build.rs，决定 PE 里的 VERSIONINFO。
+      - name: Build Rust binaries (updater + demo client)
         env:
           RELEASE_VERSION: ${{ steps.meta.outputs.version }}
-        run: client\build-msvc.bat
+        run: cargo build --release --workspace --target ${{ steps.conf.outputs.triple }}
 
       - name: Package portable zip and metadata
         shell: pwsh
@@ -152,9 +149,10 @@ jobs:
 
           $payload = "build\payload"
           New-Item -ItemType Directory -Force $payload | Out-Null
-          # 本仓库的示例客户端固定叫 GuiUpdaterDemo.exe；脚手架换了 exe_name 时按配置改名。
-          $guiExe = "dist\GuiUpdaterDemo.exe"
-          if (-not (Test-Path $guiExe)) { throw "没有找到 $guiExe，先确认 client\build-msvc.bat 构建成功" }
+          # 客户端是 demo-app 这个 workspace 成员，产物名 GuiUpdaterDemo.exe；
+          # 脚手架换了 exe_name 时在打包阶段按配置改名。
+          $guiExe = "target\$($env:TARGET_TRIPLE)\release\GuiUpdaterDemo.exe"
+          if (-not (Test-Path $guiExe)) { throw "没有找到 $guiExe，先确认 cargo build --workspace 构建成功" }
           Copy-Item $guiExe "$payload\$($env:EXE_NAME)"
           Copy-Item "target\$($env:TARGET_TRIPLE)\release\generic-updater.exe" "$payload\generic-updater.exe"
           Set-Content -Path "$payload\version.txt" -Value $version -Encoding ascii

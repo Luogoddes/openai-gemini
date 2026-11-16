@@ -193,10 +193,8 @@ stdout 一行一条 JSON：
 ## 11. 本地编译与测试
 
 ```powershell
-cargo build --release                 # target\release\generic-updater.exe
-set MSVC_SETUP=E:\打包\NuitkaGUI\msvc\setup_x64.bat
-client\build-msvc.bat                 # dist\GuiUpdaterDemo.exe
-cargo test                            # 单测：签名契约、journal 回滚、安装事务、下载、锁
+cargo build --release --workspace   # target\release\generic-updater.exe + GuiUpdaterDemo.exe
+cargo test                          # 单测：签名契约、journal 回滚、安装事务、下载、锁
 ```
 
 ## 12. 已知边界

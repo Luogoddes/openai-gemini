@@ -25,6 +25,13 @@ base64 = "0.22"
 [dev-dependencies]
 rand = "0.8"
 
+[build-dependencies]
+build-common = { path = "build-common" }
+
+[workspace]
+members = ["build-common", "demo-app"]
+resolver = "2"
+
 [profile.release]
 opt-level = "z"
 lto = "fat"

@@ -5,3 +5,4 @@
 *.part
 .app-update/
 client/build-config.h
+.trae-html-share-packages/
